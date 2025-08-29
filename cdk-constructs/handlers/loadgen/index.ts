@@ -121,6 +121,7 @@ function buildOrder(upsert = true): Envelope {
     total_amount: rndInt(10, 2000),
     currency: 'USD',
     updated_ts: nowIsoMs(),
+    produced_ts: nowIsoMs(),
     is_deleted: !upsert,
   };
   if (upsert) { recentOrders.push({ order_id, partner_id }); cap(recentOrders); }
@@ -143,6 +144,7 @@ function buildShipment(upsert = true): Envelope {
     status: rndPick([...STATUSES_SHIPMENT]),
     tracking_no: `TRK${rndInt(100000000, 999999999)}`,
     updated_ts: nowIsoMs(),
+    produced_ts: nowIsoMs(),
     is_deleted: !upsert,
   };
 
@@ -173,6 +175,7 @@ function buildShipmentEvent(): Envelope {
     location_code: rndPick([...LOCATIONS]),
     details_json: JSON.stringify({ note: 'auto', rnd: Math.random().toFixed(6) }),
     updated_ts: nowIsoMs(),
+    produced_ts: nowIsoMs(),
     is_deleted: false,
   };
 
@@ -201,6 +204,7 @@ function buildInvoice(upsert = true): Envelope {
     due_ts: status === 'PAID' ? nowIsoMs() : null,
     paid_ts: status === 'PAID' ? nowIsoMs() : null,
     updated_ts: nowIsoMs(),
+    produced_ts: nowIsoMs(),
     is_deleted: !upsert,
   };
 
@@ -236,6 +240,7 @@ function buildInvoiceItems(invoice_id: string, lines: number = rndInt(1, 5)): { 
         unit_price: unit,
         line_amount: line,
         updated_ts: nowIsoMs(),
+        produced_ts: nowIsoMs(),
         is_deleted: false,
       },
     });
@@ -269,6 +274,7 @@ function makeSecondBatch(
               total_amount: 0,
               currency: 'USD',
               updated_ts: nowIsoMs(),
+              produced_ts: nowIsoMs(),
               is_deleted: true,
             },
           }
@@ -292,6 +298,7 @@ function makeSecondBatch(
               status: 'EXCEPTION',
               tracking_no: null,
               updated_ts: nowIsoMs(),
+              produced_ts: nowIsoMs(),
               is_deleted: true,
             },
           }
@@ -323,6 +330,7 @@ function makeSecondBatch(
           due_ts: null,
           paid_ts: null,
           updated_ts: nowIsoMs(),
+          produced_ts: nowIsoMs(),
           is_deleted: true,
         },
       });
@@ -341,6 +349,7 @@ function makeSecondBatch(
             unit_price: 0,
             line_amount: 0,
             updated_ts: nowIsoMs(),
+            produced_ts: nowIsoMs(),
             is_deleted: true,
           },
         });

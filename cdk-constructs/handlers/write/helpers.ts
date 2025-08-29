@@ -84,32 +84,33 @@ export const log = (lvl: keyof typeof levels, msg: string, extra?: any) => {
   extra ? console.log(line, extra) : console.log(line);
 };
 
-type UpsertHandler = (pool: mysql.Pool, row: any, effectiveTs: string) => Promise<unknown>;
+type UpsertHandler = (pool: mysql.Pool, row: any, effectiveTs: string, latency_ts: string | null) => Promise<unknown>;
 type DeleteHandler = UpsertHandler;
 
 const ENTITY_HANDLERS: Record<EntityName, { upsert: UpsertHandler; remove: DeleteHandler }> = {
   orders_ops: {
-    remove: (pool, row, effectiveTs) =>
-      softDelete(pool, 'orders_ops', 'order_id=?', [row.order_id], effectiveTs),
-    upsert: (pool, row, effectiveTs) =>
+    remove: (pool, row, effectiveTs, latency_ts) =>
+      softDelete(pool, 'orders_ops', 'order_id=?', [row.order_id], effectiveTs, latency_ts),
+    upsert: (pool, row, effectiveTs, latency_ts) =>
       exec(pool, 'orders_upsert', SQL.orders_upsert, [
         row.order_id, row.partner_id, row.status, row.total_amount ?? 0, row.currency || 'USD',
-        effectiveTs, !!row.is_deleted,
+        effectiveTs, !!row.is_deleted, latency_ts
       ]),
   },
   shipments_ops: {
-    remove: (pool, row, effectiveTs) =>
-      softDelete(pool, 'shipments_ops', 'shipment_id=?', [row.shipment_id], effectiveTs),
-    upsert: (pool, row, effectiveTs) =>
+    remove: (pool, row, effectiveTs, latency_ts) =>
+      softDelete(pool, 'shipments_ops', 'shipment_id=?', [row.shipment_id], effectiveTs, latency_ts),
+    upsert: (pool, row, effectiveTs, latency_ts) =>
       exec(pool, 'shipments_upsert', SQL.shipments_upsert, [
         row.shipment_id, row.order_id, row.carrier_code, row.status, row.tracking_no ?? null,
-        effectiveTs, !!row.is_deleted,
+        effectiveTs, !!row.is_deleted, latency_ts
       ]),
   },
   shipment_events_ops: {
-    remove: (pool, row, effectiveTs) =>
-      softDelete(pool, 'shipment_events_ops', 'event_id=?', [row.event_id], effectiveTs),
-    upsert: (pool, row, effectiveTs) => {
+    remove: (pool, row, effectiveTs, latency_ts) =>
+      softDelete(pool, 'shipment_events_ops', 'event_id=?', [row.event_id], effectiveTs, latency_ts),
+    upsert: (pool, row, effectiveTs, latency_ts) => {
+      row.latency_ts = latency_ts;
       const detailsJson = typeof row.details_json === 'string'
         ? row.details_json
         : JSON.stringify(row.details_json ?? null);
@@ -120,22 +121,22 @@ const ENTITY_HANDLERS: Record<EntityName, { upsert: UpsertHandler; remove: Delet
     },
   },
   invoices_ops: {
-    remove: (pool, row, effectiveTs) =>
-      softDelete(pool, 'invoices_ops', 'invoice_id=?', [row.invoice_id], effectiveTs),
-    upsert: (pool, row, effectiveTs) =>
+    remove: (pool, row, effectiveTs, latency_ts) =>
+      softDelete(pool, 'invoices_ops', 'invoice_id=?', [row.invoice_id], effectiveTs, latency_ts),
+    upsert: (pool, row, effectiveTs, latency_ts) =>
       exec(pool, 'invoices_upsert', SQL.invoices_upsert, [
         row.invoice_id, row.order_id, row.partner_id, row.status, row.total_amount ?? 0,
         row.currency || 'USD', row.issued_ts ?? null, row.due_ts ?? null, row.paid_ts ?? null,
-        effectiveTs, !!row.is_deleted,
+        effectiveTs, !!row.is_deleted, , latency_ts
       ]),
   },
   invoice_items_ops: {
-    remove: (pool, row, effectiveTs) =>
-      softDelete(pool, 'invoice_items_ops', 'invoice_id=? AND line_no=?', [row.invoice_id, row.line_no], effectiveTs),
-    upsert: (pool, row, effectiveTs) =>
+    remove: (pool, row, effectiveTs, latency_ts) =>
+      softDelete(pool, 'invoice_items_ops', 'invoice_id=? AND line_no=?', [row.invoice_id, row.line_no], effectiveTs, latency_ts),
+    upsert: (pool, row, effectiveTs, latency_ts) =>
       exec(pool, 'invoice_items_upsert', SQL.invoice_items_upsert, [
         row.invoice_id, row.line_no, row.sku, row.description ?? null, row.quantity ?? 0,
-        row.unit_price ?? 0, row.line_amount ?? 0, effectiveTs, !!row.is_deleted,
+        row.unit_price ?? 0, row.line_amount ?? 0, effectiveTs, !!row.is_deleted, latency_ts
       ]),
   },
 };
@@ -154,10 +155,11 @@ export async function softDelete(
   table: EntityName,
   whereClause: string,
   params: any[],
-  updated_ts: string
+  updated_ts: string,
+  latency_ts: string | null,
 ): Promise<unknown> {
-  const sql = `UPDATE ${table} SET is_deleted=1, updated_ts=GREATEST(updated_ts, ?) WHERE ${whereClause}`;
-  return exec(pool, `${table}.softDelete`, sql, [updated_ts, ...params]);
+  const sql = `UPDATE ${table} SET is_deleted=1, updated_ts=GREATEST(updated_ts, ?), latency_ts=? WHERE ${whereClause}`;
+  return exec(pool, `${table}.softDelete`, sql, [updated_ts, ...params, latency_ts]);
 }
 
 export function toEnvelope(obj: any): Envelope | null {
@@ -219,14 +221,22 @@ async function processOne(pool: mysql.Pool, envelope: Envelope) {
   const row = envelope.data ?? {};
   const effectiveTs = typeof row.updated_ts === 'string' ? row.updated_ts : nowIsoMs();
 
+  const produced = row.produced_ts ? new Date(row.produced_ts).getTime() : null;
+  const persisted = Date.now();
+
   const handler = ENTITY_HANDLERS[envelope.entity];
   if (!handler) {
     log('warn', 'record.unknown', { entity: envelope.entity });
     return;
   }
+
+  const latency_ts = produced ? new Date(persisted - produced).toISOString() : null;
+  log('info', 'latency_ts.measure', { entity: envelope.entity, key: envelope.key, latency_ts });
+
+
   return envelope.op === 'delete'
-    ? handler.remove(pool, row, effectiveTs)
-    : handler.upsert(pool, row, effectiveTs);
+    ? handler.remove(pool, row, effectiveTs, latency_ts)
+    : handler.upsert(pool, row, effectiveTs, latency_ts);
 }
 
 export async function processChunk(
