@@ -1,0 +1,27 @@
+{
+  "name": "near-realtime-ingestion-cdk",
+  "version": "0.2.0",
+  "dependencies": {
+    "@aws-sdk/client-kafka": "^3.600.0",
+    "@aws-sdk/client-secrets-manager": "^3.876.0",
+    "aws-cdk-lib": "2.212.0",
+    "aws-msk-iam-sasl-signer-js": "^1.0.1",
+    "constructs": "10.3.0",
+    "kafkajs": "^2.2.4",
+    "mysql2": "^3.14.3",
+    "p-map": "^7.0.3",
+    "p-queue": "^8.0.1",
+    "p-retry": "^7.0.0"
+  },
+  "devDependencies": {
+    "@smithy/types": "^4.3.2",
+    "esbuild": "^0.19.11",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.9.2"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/app.js",
+    "cdk": "cdk"
+  }
+}

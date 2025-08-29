@@ -1,0 +1,12 @@
+*.js
+!jest.config.js
+*.d.ts
+node_modules
+.cdk.staging
+cdk.out
+cdk.context.json
+cdk.out.yaml
+dist
+.DS_Store
+out.json
+out.*.json
