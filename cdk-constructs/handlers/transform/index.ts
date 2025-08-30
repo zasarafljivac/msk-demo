@@ -1,26 +1,29 @@
-import { Kafka, logLevel, Partitioners } from 'kafkajs';
-import type { Producer } from 'kafkajs';
-import { generateAuthToken } from 'aws-msk-iam-sasl-signer-js';
-import { log } from '../write/helpers';
+import { Kafka, logLevel, Partitioners } from "kafkajs";
+import type { Producer } from "kafkajs";
+import { generateAuthToken } from "aws-msk-iam-sasl-signer-js";
+import { parse as uuidParse } from "uuid";
+import { log } from "../write/helpers";
+
+type UuidVariants = string | Buffer | Uint8Array;
 
 const bufferTopic = process.env.BUFFER_TOPIC!;
 const bootstrap = process.env.BOOTSTRAP_BROKERS_SASL_IAM!;
 const region = process.env.AWS_REGION!;
 
 type EntityName =
-  | 'orders_ops'
-  | 'shipments_ops'
-  | 'shipment_events_ops'
-  | 'invoices_ops'
-  | 'invoice_items_ops';
+  | "orders_ops"
+  | "shipments_ops"
+  | "shipment_events_ops"
+  | "invoices_ops"
+  | "invoice_items_ops";
 
-export type ControlMode = 'GREEN' | 'YELLOW' | 'RED';
+export type ControlMode = "GREEN" | "YELLOW" | "RED";
 
 export type Envelope = {
   entity: EntityName;
-  op?: 'upsert' | 'delete';
+  op?: "upsert" | "delete";
   data?: Record<string, any>;
-  key?: string;
+  key?: string | Uint8Array | Buffer;
   control?: {
     mode: ControlMode;
     version: number;
@@ -31,22 +34,26 @@ export type Envelope = {
 };
 
 let producer: Producer | null = null;
+
 async function getProducer(): Promise<Producer> {
   if (producer) return producer;
   const kafka = new Kafka({
-    clientId: 'transform-lambda',
-    brokers: bootstrap.split(',').map(s => s.trim()).filter(Boolean),
+    clientId: "transform-lambda",
+    brokers: bootstrap
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
     ssl: true,
     sasl: {
-      mechanism: 'oauthbearer',
+      mechanism: "oauthbearer",
       oauthBearerProvider: async () => {
         const { token } = await generateAuthToken({ region });
         return { value: token };
-      }
+      },
     },
-    logLevel: logLevel.NOTHING
+    logLevel: logLevel.NOTHING,
   });
-  producer = kafka.producer({ 
+  producer = kafka.producer({
     allowAutoTopicCreation: false,
     createPartitioner: Partitioners.DefaultPartitioner,
   });
@@ -54,35 +61,55 @@ async function getProducer(): Promise<Producer> {
   return producer;
 }
 
-const nowIsoMs = () => new Date().toISOString();
-
-function inferKey(entity: EntityName, d: Record<string, any>): string | undefined {
-  switch (entity) {
-    case 'orders_ops': return d.order_id;
-    case 'shipments_ops': return d.shipment_id;
-    case 'shipment_events_ops': return d.shipment_id;
-    case 'invoices_ops': return d.invoice_id;
-    case 'invoice_items_ops': return d.invoice_id;
-    default: return undefined;
+function toKeyBuffer(input?: UuidVariants): Buffer | undefined {
+  if (input == null) return undefined;
+  if (Buffer.isBuffer(input)) return input;
+  if (input instanceof Uint8Array) return Buffer.from(input);
+  const s = String(input).trim();
+  try {
+    return Buffer.from(uuidParse(s));
+  } catch {
+    return Buffer.from(s, "utf8");
   }
 }
 
-function normalize(env: Envelope): Envelope {
-  const data = { ...env.data };
+function inferPartitionKey(
+  entity: EntityName,
+  data: Record<string, any>,
+): Buffer | undefined {
+  switch (entity) {
+    case "orders_ops":
+      return toKeyBuffer(data.order_id);
+    case "shipments_ops":
+      return toKeyBuffer(data.shipment_id);
+    case "shipment_events_ops":
+      return toKeyBuffer(data.shipment_id);
+    case "invoices_ops":
+      return toKeyBuffer(data.invoice_id);
+    case "invoice_items_ops":
+      return toKeyBuffer(data.invoice_id);
+    default:
+      return undefined;
+  }
+}
 
-  data.updated_ts ??= nowIsoMs();
-  data.is_deleted = env.op === 'delete' ? true : !!data.is_deleted;
+function normalize(envelope: Envelope): Envelope {
+  const data = { ...envelope.data };
+  const now = new Date().toISOString();
 
-  if ((env.entity === 'orders_ops' || env.entity === 'invoices_ops') && !data.currency) {
-    data.currency = 'USD';
+  data.updated_ts ??= now;
+  data.is_deleted = envelope.op === "delete" ? true : !!data.is_deleted;
+
+  if (
+    (envelope.entity === "orders_ops" || envelope.entity === "invoices_ops") &&
+    !data.currency
+  ) {
+    data.currency = "USD";
   }
 
-  return {
-    entity: env.entity,
-    op: env.op,
-    data: data,
-    key: env.key ?? inferKey(env.entity!, data),
-  };
+  const key =
+    toKeyBuffer(envelope.key) ?? inferPartitionKey(envelope.entity, data);
+  return { ...envelope, data, key };
 }
 
 function toEnvelope(obj: any): Envelope | null {
@@ -91,45 +118,45 @@ function toEnvelope(obj: any): Envelope | null {
   }
   if (obj && obj.order_id) {
     return normalize({
-      entity: 'orders_ops',
-      op: obj.is_deleted ? 'delete' as const : 'upsert',
+      entity: "orders_ops",
+      op: obj.is_deleted ? ("delete" as const) : "upsert",
       data: obj,
-      key: obj.order_id
+      key: obj.order_id,
     });
   }
   return null;
 }
 
 export const handler = async (event: any) => {
-  producer = await getProducer();
-  console.log(JSON.stringify(event));
+  const producer = await getProducer();
+  const msgs: { key?: Buffer; value: Buffer }[] = [];
 
-  const out: { key?: Buffer; value: Buffer }[] = [];
   for (const arr of Object.values(event.records || {})) {
     for (const rec of arr as any[]) {
-      const raw = Buffer.from(rec.value, 'base64').toString('utf8');
       try {
-        const obj = JSON.parse(raw);
-        const env = toEnvelope(obj);
-        if (!env) continue;
-
-        const n = normalize(env);
-        if (!n.key) continue;
-
-        out.push({
-          key: Buffer.from(String(n.key)),
-          value: Buffer.from(JSON.stringify(n))
+        const raw = Buffer.from(rec.value, "base64").toString("utf8");
+        const envelope = toEnvelope(JSON.parse(raw));
+        if (!envelope) continue;
+        const normalized = normalize(envelope);
+        const key = normalized.key as Buffer | undefined;
+        if (!key) {
+          log("warn", "transform.drop.no-key", { entity: normalized.entity });
+          continue;
+        }
+        const { key: _unusedKey, ...valueObj } = normalized;
+        msgs.push({
+          key,
+          value: Buffer.from(JSON.stringify(valueObj)),
         });
-      } catch(err) {
-        // ignore malformed records
-        log('debug', 'kafka.transform.malformed', err)
+      } catch (e) {
+        log("debug", "transform.malformed", { err: String(e) });
       }
     }
   }
 
-  if (out.length) {
-    await producer.send({ topic: bufferTopic, messages: out });
-  }
-
-  return { statusCode: 200, batchItemFailures: [] as Array<{ itemIdentifier: string }> };
+  if (msgs.length) await producer.send({ topic: bufferTopic, messages: msgs });
+  return {
+    statusCode: 200,
+    batchItemFailures: [] as Array<{ itemIdentifier: string }>,
+  };
 };

@@ -18,41 +18,49 @@ This CDK app provisions an infrastructure for the [AWS Community Adria 2025 talk
 ## How to use Makefile
 
 This will display available options.
+
 ```bash
 make help
 ```
 
 **Set your region/profile**
+
 ```bash
 export AWS_REGION=eu-central-1
 export AWS_PROFILE=dev
 ```
 
 **If you ommit setting env vars, then default values are:**
+
 ```bash
 export AWS_REGION=us-east-1
 export AWS_PROFILE=default
 ```
 
-You can pass region and profile explicitly in your commands when using make, otherwise it will use default values. 
+You can pass region and profile explicitly in your commands when using make, otherwise it will use default values.
 
 1. Bootstrap needed only once per account/region
+
 ```bash
-make bootstrap 
+make bootstrap
 ```
 
 2. Deploy with explicit ordering
+
 ```bash
-make deploy-all 
+make deploy-all
 ```
 
 3. Or let CDK manage order (Network goes first, then others)
+
 ```bash
 make deploy
 ```
+
 4. See outputs
+
 ```bash
-make outputs 
+make outputs
 make stack-outputs STACK=MskDemo-Integration
 ```
 

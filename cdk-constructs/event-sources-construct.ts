@@ -1,6 +1,6 @@
-import { Construct } from 'constructs';
-import { CfnEventSourceMapping } from 'aws-cdk-lib/aws-lambda';
-import { IFunction } from 'aws-cdk-lib/aws-lambda';
+import { Construct } from "constructs";
+import { CfnEventSourceMapping } from "aws-cdk-lib/aws-lambda";
+import { IFunction } from "aws-cdk-lib/aws-lambda";
 
 export interface EventSourcesConstructProps {
   mskArn: string;
@@ -15,31 +15,31 @@ export class EventSourcesConstruct extends Construct {
   constructor(scope: Construct, id: string, props: EventSourcesConstructProps) {
     super(scope, id);
 
-    const esm1 = new CfnEventSourceMapping(this, 'EsmSource', {
+    const esm1 = new CfnEventSourceMapping(this, "EsmSource", {
       functionName: props.transformFn.functionArn,
       eventSourceArn: props.mskArn,
       topics: [props.sourceTopic],
       batchSize: 100,
       maximumBatchingWindowInSeconds: 1,
-      startingPosition: 'LATEST',
+      startingPosition: "LATEST",
     });
 
-    const esm2 = new CfnEventSourceMapping(this, 'EsmBuffer', {
+    const esm2 = new CfnEventSourceMapping(this, "EsmBuffer", {
       functionName: props.writeFn.functionArn,
       eventSourceArn: props.mskArn,
       topics: [props.bufferTopic],
       batchSize: 100,
       maximumBatchingWindowInSeconds: 1,
-      startingPosition: 'LATEST',
+      startingPosition: "LATEST",
     });
 
-    new CfnEventSourceMapping(this, 'EsmDbHealth', {
+    new CfnEventSourceMapping(this, "EsmDbHealth", {
       functionName: props.writeFn.functionArn,
       eventSourceArn: props.mskArn,
       topics: [props.controlTopic],
       batchSize: 10,
       maximumBatchingWindowInSeconds: 1,
-      startingPosition: 'LATEST',
+      startingPosition: "LATEST",
     });
 
     esm2.addDependency(esm1);

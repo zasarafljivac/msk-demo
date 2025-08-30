@@ -7,19 +7,17 @@ export const SQL = {
       total_amount,
       currency,
       updated_ts,
-      is_deleted,
-      latency_ts
+      is_deleted
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    AS new
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    AS newdata
     ON DUPLICATE KEY UPDATE
-      partner_id = new.partner_id,
-      status = new.status,
-      total_amount = new.total_amount,
-      currency = new.currency,
-      updated_ts = GREATEST(orders_ops.updated_ts, new.updated_ts),
-      is_deleted = new.is_deleted,
-      latency_ts = new.latency_ts;
+      partner_id = newdata.partner_id,
+      status = newdata.status,
+      total_amount = newdata.total_amount,
+      currency = newdata.currency,
+      updated_ts = GREATEST(orders_ops.updated_ts, newdata.updated_ts),
+      is_deleted = newdata.is_deleted;
   `,
 
   shipments_upsert: `
@@ -30,19 +28,17 @@ export const SQL = {
       status,
       tracking_no,
       updated_ts,
-      is_deleted,
-      latency_ts
+      is_deleted
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    AS new
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    AS newdata
     ON DUPLICATE KEY UPDATE
-      order_id = new.order_id,
-      carrier_code = new.carrier_code,
-      status = new.status,
-      tracking_no = new.tracking_no,
-      updated_ts = GREATEST(shipments_ops.updated_ts, new.updated_ts),
-      is_deleted = new.is_deleted,
-      latency_ts = new.latency_ts;
+      order_id      = newdata.order_id,
+      carrier_code  = newdata.carrier_code,
+      status        = newdata.status,
+      tracking_no   = newdata.tracking_no,
+      updated_ts    = GREATEST(shipments_ops.updated_ts, newdata.updated_ts),
+      is_deleted    = newdata.is_deleted;
   `,
 
   shipment_events_upsert: `
@@ -55,25 +51,23 @@ export const SQL = {
       location_code,
       details_json,
       updated_ts,
-      is_deleted,
-      latency_ts
+      is_deleted
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    AS new
+    VALUES (?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?)
+    AS newdata
     ON DUPLICATE KEY UPDATE
-      shipment_id = new.shipment_id,
-      event_type = new.event_type,
-      status = new.status,
-      event_time = new.event_time,
-      location_code = new.location_code,
-      details_json = new.details_json,
-      updated_ts = GREATEST(shipment_events_ops.updated_ts, new.updated_ts),
-      is_deleted = new.is_deleted,
-      latency_ts = new.latency_ts;
+      shipment_id = newdata.shipment_id,
+      event_type = newdata.event_type,
+      status = newdata.status,
+      event_time = newdata.event_time,
+      location_code = newdata.location_code,
+      details_json = newdata.details_json,
+      updated_ts = GREATEST(shipment_events_ops.updated_ts, newdata.updated_ts),
+      is_deleted = newdata.is_deleted;
   `,
 
   invoices_upsert: `
-    INSERT INTO invoices_ops (
+    INSERT INTO invoices_ops(
       invoice_id,
       order_id,
       partner_id,
@@ -84,23 +78,21 @@ export const SQL = {
       due_ts,
       paid_ts,
       updated_ts,
-      is_deleted,
-      latency_ts
+      is_deleted
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    AS new
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    AS newdata
     ON DUPLICATE KEY UPDATE
-      order_id = new.order_id,
-      partner_id = new.partner_id,
-      status = new.status,
-      total_amount = new.total_amount,
-      currency = new.currency,
-      issued_ts = new.issued_ts,
-      due_ts = new.due_ts,
-      paid_ts = new.paid_ts,
-      updated_ts = GREATEST(invoices_ops.updated_ts, new.updated_ts),
-      is_deleted = new.is_deleted,
-      latency_ts = new.latency_ts;
+      order_id = newdata.order_id,
+      partner_id = newdata.partner_id,
+      status = newdata.status,
+      total_amount = newdata.total_amount,
+      currency = newdata.currency,
+      issued_ts = newdata.issued_ts,
+      due_ts = newdata.due_ts,
+      paid_ts = newdata.paid_ts,
+      updated_ts = GREATEST(invoices_ops.updated_ts, newdata.updated_ts),
+      is_deleted = newdata.is_deleted;
   `,
 
   invoice_items_upsert: `
@@ -113,19 +105,17 @@ export const SQL = {
       unit_price,
       line_amount,
       updated_ts,
-      is_deleted,
-      latency_ts
+      is_deleted
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    AS new
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    AS newdata
     ON DUPLICATE KEY UPDATE
-      sku = new.sku,
-      description = new.description,
-      quantity = new.quantity,
-      unit_price = new.unit_price,
-      line_amount = new.line_amount,
-      updated_ts = GREATEST(invoice_items_ops.updated_ts, new.updated_ts),
-      is_deleted = new.is_deleted,
-      latency_ts = new.latency_ts;
+      sku = newdata.sku,
+      description = newdata.description,
+      quantity = newdata.quantity,
+      unit_price = newdata.unit_price,
+      line_amount = newdata.line_amount,
+      updated_ts = GREATEST(invoice_items_ops.updated_ts, newdata.updated_ts),
+      is_deleted = newdata.is_deleted;
   `,
 };

@@ -1,6 +1,6 @@
 # Demo Explained
 
-The purpose of the demo is to show how to design a resilient system that can handle production challenges. It consists of multiple tips and tricks used to deal with backpressure, spikes in traffic, and proactively react to unexpected changes in the target system. Kafka is designed to stream a huge number of messages in real time, but what about the other components? 
+The purpose of the demo is to show how to design a resilient system that can handle production challenges. It consists of multiple tips and tricks used to deal with backpressure, spikes in traffic, and proactively react to unexpected changes in the target system. Kafka is designed to stream a huge number of messages in real time, but what about the other components?
 <br /><br />
 Lambda can scale aggressively and, in its frenzy, respond to the demand and heavy load introduced by Kafka, but that is only part of the story. What happens with the RDS database and the other parts of the system? What can we do to avoid being a noisy neighbor? How do we avoid overprovisioning components and paying huge amounts of money for infrastructure, while still fulfilling business requirements?
 <br /><br />
@@ -14,18 +14,17 @@ We will start by explaining separation of concerns, why it is important, and fol
 
 Before I made this calculation, I load tested my infrastructure and measured latency. My batch, or rather chunk, of 30 messages was processed in between 0.15 and 0.20 seconds. I am adding a 30% safety buffer in case of increased latency or unexpected lag.
 
-P = max( 1 , ceil( (T * t * f) / B ) )
+P = max( 1 , ceil( (T _ t _ f) / B ) )
 
 Where:
 
-| Symbol | Meaning                                   |
-|--------|-------------------------------------------|
-| T      | Target TPS (messages per second)          |
-| t      | Processing time per batch (seconds)       |
-| B      | Batch size (records per batch)            |
-| f      | Safety factor (buffer for spikes, 1.3–1.5)|
-| P      | Required number of Kafka partitions       |
-
+| Symbol | Meaning                                    |
+| ------ | ------------------------------------------ |
+| T      | Target TPS (messages per second)           |
+| t      | Processing time per batch (seconds)        |
+| B      | Batch size (records per batch)             |
+| f      | Safety factor (buffer for spikes, 1.3–1.5) |
+| P      | Required number of Kafka partitions        |
 
 Given:
 T = 500 TPS
@@ -34,8 +33,8 @@ f = 1.3
 B = 30
 
 Compute:
-500 * 0.2 = 100
-100 * 1.3 = 130
+500 _ 0.2 = 100
+100 _ 1.3 = 130
 130 / 30 = 4.33
 ceil(4.33) = 5
 
@@ -43,14 +42,14 @@ Result: **P = 5 partitions**
 
 With 5 concurrent writers (1 per partition), the maximum client connections are:
 
-ClientConnections = P * ConnectionLimit
-ClientConnections = 5 * 2 = 10
+ClientConnections = P _ ConnectionLimit
+ClientConnections = 5 _ 2 = 10
 (where connectionLimit on the pool is set to 2).
 
 We split a batch of 30 rows into 2 queries of 15 rows each. The database connections remain around:
 
-DBConnections = P * CHUNK_CONCURRENCY
-DBConnections = 5 * 2 = 10
+DBConnections = P _ CHUNK_CONCURRENCY
+DBConnections = 5 _ 2 = 10
 
 This allows the RDS Proxy to reuse database connections effectively.
 We can even reduce the number of connections further to demonstrate the point.
@@ -78,11 +77,9 @@ This demonstrates adaptive behavior based on database load.
 
 ## How To Generate Traffic
 
-Check the defaults within the file and tailor it as you wish. 
+Check the defaults within the file and tailor it as you wish.
+
 ```bash
 chmod +x ./demo.sh
 ./demo.sh
 ```
-
-
-
