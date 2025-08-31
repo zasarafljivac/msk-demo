@@ -1,85 +1,108 @@
-import { ConfigResourceTypes, Admin } from "kafkajs";
-import { DescribeClusterV2Command, KafkaClient } from "@aws-sdk/client-kafka";
+import { DescribeClusterV2Command, KafkaClient } from '@aws-sdk/client-kafka';
+import type { Admin } from 'kafkajs';
+import { ConfigResourceTypes } from 'kafkajs';
 
 export async function waitForMskActive(
   timeoutMs: number,
   region: string,
   clusterArn: string,
-) {
+): Promise<void> {
   const client = new KafkaClient({ region });
   const start = Date.now();
-  while (true) {
-    const out = await client.send(
-      new DescribeClusterV2Command({ ClusterArn: clusterArn }),
-    );
-    if (out.ClusterInfo?.State === "ACTIVE") return;
-    if (Date.now() - start > timeoutMs)
-      throw new Error("MSK cluster not ACTIVE in time");
-    await new Promise((r) => setTimeout(r, 5000));
+  for (;;) {
+    const out = await client.send(new DescribeClusterV2Command({ ClusterArn: clusterArn }));
+    if (out.ClusterInfo?.State === 'ACTIVE') {
+      return;
+    }
+    if (Date.now() - start > timeoutMs) {
+      throw new Error('MSK cluster not ACTIVE in time');
+    }
+    await new Promise<void>((r) => setTimeout(r, 5000));
   }
 }
 
-export async function compactTopic(admin: Admin, topic: string) {
-  const describedConfigResult = await admin.describeConfigs({
+interface ConfigEntryLite {
+  name: string;
+  value: string | null;
+}
+
+function isEntryLike(obj: unknown): obj is { name: unknown; value?: unknown } {
+  return !!obj && typeof obj === 'object' && 'name' in obj;
+}
+
+function coerceEntries(entriesUnknown: unknown): ConfigEntryLite[] {
+  const out: ConfigEntryLite[] = [];
+  if (!Array.isArray(entriesUnknown)) {
+    return out;
+  }
+  for (const item of entriesUnknown) {
+    if (isEntryLike(item) && typeof (item as { name: unknown }).name === 'string') {
+      const name = (item as { name: string }).name;
+      const v = (item as { value?: unknown }).value;
+      const value = v == null ? null : JSON.stringify(v);
+      out.push({ name, value });
+    }
+  }
+  return out;
+}
+
+type AdminWithIncremental = Admin & {
+  incrementalAlterConfigs?: (args: {
+    resources: {
+      type: number;
+      name: string;
+      configs: { name: string; value: string }[];
+    }[];
+    validateOnly?: boolean;
+  }) => Promise<void>;
+};
+
+export async function compactTopic(admin: Admin, topic: string): Promise<void> {
+  const described = await admin.describeConfigs({
     resources: [
       {
         type: ConfigResourceTypes.TOPIC,
         name: topic,
-        configNames: [
-          "cleanup.policy",
-          "min.cleanable.dirty.ratio",
-          "segment.ms",
-        ],
+        configNames: ['cleanup.policy', 'min.cleanable.dirty.ratio', 'segment.ms'],
       },
     ],
     includeSynonyms: true,
   });
 
-  const entries = describedConfigResult?.resources?.[0]?.configEntries ?? [];
-  const toMap = (arr: any[]) =>
-    Object.fromEntries(arr.map((e: any) => [e.name, e.value]));
-  const cfg = toMap(entries);
+  const resources = described.resources ?? [];
+  const first = resources[0];
+  const entries = coerceEntries(first?.configEntries ?? []);
+  const cfg: Record<string, string | null> = {};
+  for (const e of entries) {
+    cfg[e.name] = e.value;
+  }
 
-  const needsCleanupPolicy =
-    !cfg["cleanup.policy"] ||
-    !String(cfg["cleanup.policy"]).includes("compact");
-  const needsDirtyRatio = cfg["min.cleanable.dirty.ratio"] !== "0.01";
-  const needsSegmentMs = cfg["segment.ms"] !== "600000";
+  const cleanupPolicy = cfg['cleanup.policy'];
+  const needsCleanupPolicy = cleanupPolicy == null || !String(cleanupPolicy).includes('compact');
+  const needsDirtyRatio = cfg['min.cleanable.dirty.ratio'] !== '0.01';
+  const needsSegmentMs = cfg['segment.ms'] !== '600000';
 
-  if (!needsCleanupPolicy && !needsDirtyRatio && !needsSegmentMs) return;
+  if (!needsCleanupPolicy && !needsDirtyRatio && !needsSegmentMs) {
+    return;
+  }
 
   const desired = [
-    needsCleanupPolicy && { name: "cleanup.policy", value: "compact" },
-    needsDirtyRatio && { name: "min.cleanable.dirty.ratio", value: "0.01" },
-    needsSegmentMs && { name: "segment.ms", value: "600000" },
-  ].filter(Boolean) as Array<{ name: string; value: string }>;
+    needsCleanupPolicy ? { name: 'cleanup.policy', value: 'compact' } : null,
+    needsDirtyRatio ? { name: 'min.cleanable.dirty.ratio', value: '0.01' } : null,
+    needsSegmentMs ? { name: 'segment.ms', value: '600000' } : null,
+  ].filter((x): x is { name: string; value: string } => x != null);
 
-  const hasIncremental =
-    typeof (admin as any).incrementalAlterConfigs === "function";
-
-  // because legacy drama ¯\_(ツ)_/¯
-  if (hasIncremental) {
-    await (admin as any).incrementalAlterConfigs({
-      resources: [
-        {
-          type: ConfigResourceTypes.TOPIC,
-          name: topic,
-          configs: desired.map((d) => ({ name: d.name, value: d.value })),
-        },
-      ],
+  const a = admin as AdminWithIncremental;
+  if (typeof a.incrementalAlterConfigs === 'function') {
+    await a.incrementalAlterConfigs({
+      resources: [{ type: ConfigResourceTypes.TOPIC, name: topic, configs: desired }],
       validateOnly: false,
     });
     return;
   }
 
   await admin.alterConfigs({
-    resources: [
-      {
-        type: ConfigResourceTypes.TOPIC,
-        name: topic,
-        configEntries: desired,
-      },
-    ],
+    resources: [{ type: ConfigResourceTypes.TOPIC, name: topic, configEntries: desired }],
     validateOnly: false,
   });
 }

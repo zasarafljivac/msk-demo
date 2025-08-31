@@ -15,23 +15,26 @@
     "uuid": "^11.1.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.34.0",
     "@smithy/types": "^4.3.2",
     "@typescript-eslint/eslint-plugin": "^8.41.0",
     "@typescript-eslint/parser": "^8.41.0",
     "esbuild": "^0.19.11",
     "eslint": "^9.34.0",
-    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-n": "^17.21.3",
+    "eslint-plugin-simple-import-sort": "^12.1.1",
+    "eslint-plugin-unused-imports": "^4.2.0",
+    "globals": "^16.3.0",
     "prettier": "^3.6.2",
     "ts-node": "^10.9.2",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "typescript-eslint": "^8.41.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/app.js",
     "cdk": "cdk",
-    "lint": "eslint . --ext .ts --report-unused-disable-directives",
-    "lint:fix": "eslint . --ext .ts --fix",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "lint": "eslint . --fix",
+    "format": "prettier . --write"
   }
 }

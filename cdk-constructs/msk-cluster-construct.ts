@@ -1,9 +1,9 @@
-import { Construct } from "constructs";
-import { CfnCluster } from "aws-cdk-lib/aws-msk";
-import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
-import { CfnOutput, RemovalPolicy, Stack } from "aws-cdk-lib";
-import { IVpc, ISecurityGroup } from "aws-cdk-lib/aws-ec2";
-import * as cr from "aws-cdk-lib/custom-resources";
+import { CfnOutput, RemovalPolicy, Stack } from 'aws-cdk-lib';
+import type { ISecurityGroup, IVpc } from 'aws-cdk-lib/aws-ec2';
+import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
+import { CfnCluster } from 'aws-cdk-lib/aws-msk';
+import * as cr from 'aws-cdk-lib/custom-resources';
+import { Construct } from 'constructs';
 
 export interface MskClusterConstructProps {
   vpc: IVpc;
@@ -17,19 +17,19 @@ export class MskClusterConstruct extends Construct {
   constructor(scope: Construct, id: string, props: MskClusterConstructProps) {
     super(scope, id);
 
-    this.logGroup = new LogGroup(this, "MskLogs", {
+    this.logGroup = new LogGroup(this, 'MskLogs', {
       retention: RetentionDays.ONE_WEEK,
       removalPolicy: RemovalPolicy.DESTROY,
     });
 
-    this.cluster = new CfnCluster(this, "Msk", {
+    this.cluster = new CfnCluster(this, 'Msk', {
       clusterName: `${Stack.of(this).stackName}-demo`,
-      kafkaVersion: "3.8.x",
+      kafkaVersion: '3.8.x',
       numberOfBrokerNodes: 3,
       brokerNodeGroupInfo: {
         clientSubnets: props.vpc.privateSubnets.map((s) => s.subnetId),
         securityGroups: [props.mskSg.securityGroupId],
-        instanceType: "kafka.t3.small",
+        instanceType: 'kafka.t3.small',
         storageInfo: { ebsStorageInfo: { volumeSize: 100 } },
       },
       clientAuthentication: {
@@ -41,7 +41,7 @@ export class MskClusterConstruct extends Construct {
       },
       encryptionInfo: {
         encryptionInTransit: {
-          clientBroker: "TLS",
+          clientBroker: 'TLS',
           inCluster: true,
         },
       },
@@ -55,25 +55,21 @@ export class MskClusterConstruct extends Construct {
       },
     });
 
-    const getBrokers = new cr.AwsCustomResource(this, "GetBootstrapBrokers", {
+    const getBrokers = new cr.AwsCustomResource(this, 'GetBootstrapBrokers', {
       onUpdate: {
-        service: "Kafka",
-        action: "getBootstrapBrokers",
+        service: 'Kafka',
+        action: 'getBootstrapBrokers',
         parameters: { ClusterArn: this.cluster.attrArn },
-        physicalResourceId: cr.PhysicalResourceId.of(
-          `GetBootstrapBrokers-${id}`,
-        ),
+        physicalResourceId: cr.PhysicalResourceId.of(`GetBootstrapBrokers-${id}`),
       },
       policy: cr.AwsCustomResourcePolicy.fromSdkCalls({
         resources: [this.cluster.attrArn],
       }),
     });
 
-    this.bootstrapBrokersSaslIam = getBrokers.getResponseField(
-      "BootstrapBrokerStringSaslIam",
-    );
+    this.bootstrapBrokersSaslIam = getBrokers.getResponseField('BootstrapBrokerStringSaslIam');
 
-    new CfnOutput(this, "BootstrapBrokersSaslIam", {
+    new CfnOutput(this, 'BootstrapBrokersSaslIam', {
       value: this.bootstrapBrokersSaslIam,
     });
   }

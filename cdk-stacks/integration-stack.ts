@@ -1,9 +1,11 @@
-import { Stack, StackProps, CustomResource } from "aws-cdk-lib";
-import { Construct } from "constructs";
-import { Provider } from "aws-cdk-lib/custom-resources";
-import { EventSourcesConstruct } from "../cdk-constructs/event-sources-construct";
-import { ComputeStack } from "./compute-stack";
-import { MskStack } from "./msk-stack";
+import type { StackProps } from 'aws-cdk-lib';
+import { CustomResource, Stack } from 'aws-cdk-lib';
+import { Provider } from 'aws-cdk-lib/custom-resources';
+import type { Construct } from 'constructs';
+
+import { EventSourcesConstruct } from '../cdk-constructs/event-sources-construct';
+import type { ComputeStack } from './compute-stack';
+import type { MskStack } from './msk-stack';
 
 export class IntegrationStack extends Stack {
   constructor(
@@ -19,18 +21,14 @@ export class IntegrationStack extends Stack {
   ) {
     super(scope, id, props);
 
-    const provider = new Provider(this, "CreateTopicProvider", {
+    const provider = new Provider(this, 'CreateTopicProvider', {
       onEventHandler: props.computeStack.lambdas.createTopicFn,
     });
-    const topicCreateCustomResource = new CustomResource(
-      this,
-      "CreateTopicsFetchBootstrap",
-      {
-        serviceToken: provider.serviceToken,
-      },
-    );
+    const topicCreateCustomResource = new CustomResource(this, 'CreateTopicsFetchBootstrap', {
+      serviceToken: provider.serviceToken,
+    });
 
-    const esms = new EventSourcesConstruct(this, "EsmsSourceBuffer", {
+    const esms = new EventSourcesConstruct(this, 'EsmsSourceBuffer', {
       mskArn: props.mskStack.msk.cluster.attrArn,
       sourceTopic: props.SOURCE_TOPIC,
       bufferTopic: props.BUFFER_TOPIC,

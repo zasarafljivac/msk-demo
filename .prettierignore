@@ -1,5 +1,7 @@
-dist/
-cdk.out/
-node_modules/
-package-lock.json
-coverage/
+node_modules
+dist
+build
+.sst
+.serverless
+cdk.out
+coverage

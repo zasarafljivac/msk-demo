@@ -1,8 +1,45 @@
-import mysql from "mysql2/promise";
-import pMap from "p-map";
-import pRetry from "p-retry";
-import { ControlMode, Envelope } from "../transform";
-import { ENTITY_HANDLERS, stopTime } from "./sql-upsert-handlers";
+import mysql from 'mysql2/promise';
+import pMap from 'p-map';
+import pRetry from 'p-retry';
+
+import { ENTITY_HANDLERS, stopTime } from './sql-upsert-handlers';
+
+type ControlMode = 'GREEN' | 'YELLOW' | 'RED';
+
+type EntityName =
+  | 'orders_ops'
+  | 'shipments_ops'
+  | 'shipment_events_ops'
+  | 'invoices_ops'
+  | 'invoice_items_ops';
+
+interface Envelope {
+  entity: EntityName;
+  op?: 'upsert' | 'delete';
+  data?: Record<string, unknown>;
+  control?: {
+    mode: ControlMode;
+    version: number;
+    updatedAt: string;
+    alarm: string;
+    rawState: string;
+  };
+}
+
+interface SecretsGetResponse {
+  SecretString?: string;
+  SecretBinary?: string;
+}
+
+interface RawSecret {
+  dbClusterIdentifier?: unknown;
+  password?: unknown;
+  dbname?: unknown;
+  engine?: unknown;
+  port?: unknown;
+  host?: unknown;
+  username?: unknown;
+}
 
 export type CachedSecret = {
   dbClusterIdentifier: string;
@@ -14,8 +51,7 @@ export type CachedSecret = {
   username: string;
 } | null;
 
-export type EnvType = {
-  SAFETY_MS: number;
+export interface EnvType {
   CHUNK_CONCURRENCY: number;
   CHUNK_SIZE: number;
   CHUNK_PARALLELISM: number;
@@ -24,23 +60,34 @@ export type EnvType = {
   TOKEN: string;
   PARAM_NAME: string;
   DEFAULT_MODE: ControlMode;
-};
+}
 
-type ProcessResult = {
+interface ProcessResult {
   ok: number;
   failed: number;
   retried: number;
-  errors: Array<{ index: number; entity: string; reason: string }>;
-};
+  errors: { index: number; entity: string; reason: string }[];
+}
 
-let SAFETY_MS = 0;
+interface SqlError {
+  code?: string | number;
+  errno?: number;
+  sqlState?: string;
+  message?: string;
+  stack?: string;
+}
+
+interface SsmParamResponse {
+  Parameter?: { Value?: unknown };
+}
+
 let CHUNK_CONCURRENCY = 0;
 let CHUNK_PARALLELISM = 0;
-let LOG_LEVEL = "info";
-let RDS_PROXY_ENDPOINT = "";
-let TOKEN = "";
-let PARAM_NAME = "/msk-demo/db-mode";
-let DEFAULT_MODE: ControlMode = "GREEN";
+let LOG_LEVEL = 'info';
+let RDS_PROXY_ENDPOINT = '';
+let TOKEN = '';
+let PARAM_NAME = '/msk-demo/db-mode';
+let DEFAULT_MODE: ControlMode = 'GREEN';
 
 const DEFAULTS = {
   maxRetries: 3,
@@ -50,7 +97,6 @@ const DEFAULTS = {
 };
 
 export const setVars = (input: EnvType) => {
-  SAFETY_MS = input.SAFETY_MS;
   CHUNK_CONCURRENCY = input.CHUNK_CONCURRENCY;
   CHUNK_PARALLELISM = input.CHUNK_PARALLELISM;
   LOG_LEVEL = input.LOG_LEVEL;
@@ -60,21 +106,23 @@ export const setVars = (input: EnvType) => {
   DEFAULT_MODE = input.DEFAULT_MODE;
 };
 
-export function isoMs(
-  input?: string | number | Date | null | undefined,
-): string {
-  if (!input) return new Date().toISOString();
-
-  if (typeof input === "string") {
-    const s = (input as string).trim();
-    if (s === "") return new Date().toISOString();
-    if (/^\d+$/.test(s)) return new Date(Number(s)).toISOString();
+export function isoMs(input?: string | number | Date | null): string {
+  if (!input) {
+    return new Date().toISOString();
   }
-
+  if (typeof input === 'string') {
+    const s = input.trim();
+    if (s === '') {
+      return new Date().toISOString();
+    }
+    if (/^\d+$/.test(s)) {
+      return new Date(Number(s)).toISOString();
+    }
+  }
   return new Date(input).toISOString();
 }
 
-const SecretId = process.env.DB_SECRET_ARN!;
+const SecretId = process.env.DB_SECRET_ARN ?? '';
 let cachedSecret: CachedSecret = null;
 
 const levels: Record<string, number> = {
@@ -84,77 +132,110 @@ const levels: Record<string, number> = {
   debug: 3,
   trace: 4,
 };
-const enabled = (lvl: keyof typeof levels) =>
-  levels[lvl] <= (levels[LOG_LEVEL] ?? 2);
+const enabled = (lvl: keyof typeof levels) => levels[lvl] <= (levels[LOG_LEVEL] ?? 2);
 
-export const log = (lvl: keyof typeof levels, msg: string, extra?: any) => {
-  if (!enabled(lvl)) return;
-  const line = `[${isoMs()}] ${lvl.toUpperCase()} ${msg}`;
-  extra ? console.log(line, extra) : console.log(line);
+export const log = (lvl: keyof typeof levels, msg: string, extra?: unknown) => {
+  if (!enabled(lvl)) {
+    return;
+  }
+  const line = `[${isoMs()}] ${String(lvl).toUpperCase()} ${msg}`;
+  if (extra !== undefined) {
+    console.log(line, extra);
+  } else {
+    console.log(line);
+  }
 };
 
-export function toEnvelope(obj: any): Envelope | null {
-  if (obj && obj.entity && obj.op && obj.data) return obj as Envelope;
-  if (obj && obj.order_id) {
-    return {
-      entity: "orders_ops",
-      op: obj.is_deleted ? "delete" : "upsert",
-      data: obj,
-      key: obj.order_id,
-    };
+const isRecord = (input: unknown): input is Record<string, unknown> =>
+  typeof input === 'object' && input !== null;
+
+export function toEnvelope(obj: unknown): Envelope | null {
+  if (!isRecord(obj)) {
+    return null;
   }
+
+  if ('control' in obj && isRecord(obj.control)) {
+    const c = (obj as { control: Envelope['control'] }).control;
+    return { entity: 'orders_ops', op: 'upsert', data: {}, control: c };
+  }
+
+  if ('entity' in obj && 'data' in obj) {
+    const { entity, op, data } = obj as { entity: unknown; op?: unknown; data?: unknown };
+    if (
+      typeof entity === 'string' &&
+      [
+        'orders_ops',
+        'shipments_ops',
+        'shipment_events_ops',
+        'invoices_ops',
+        'invoice_items_ops',
+      ].includes(entity) &&
+      isRecord(data)
+    ) {
+      const isDel = Boolean(data.is_deleted);
+      const finalOp: 'upsert' | 'delete' =
+        op === 'delete' || (op !== 'upsert' && isDel) ? 'delete' : 'upsert';
+      return { entity: entity as EntityName, op: finalOp, data: data };
+    }
+  }
+
+  if ('order_id' in obj) {
+    const data = obj;
+    const isDel = Boolean((data as { is_deleted?: unknown }).is_deleted);
+    return { entity: 'orders_ops', op: isDel ? 'delete' : 'upsert', data };
+  }
+
   return null;
 }
 
 export function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
   return out;
 }
 
-export async function getPool(
-  existingPool: mysql.Pool | null,
-): Promise<mysql.Pool> {
-  if (existingPool) return existingPool;
+export async function getPool(existingPool: mysql.Pool | null): Promise<mysql.Pool> {
+  if (existingPool) {
+    return existingPool;
+  }
 
   let stop = stopTime();
-  log("info", "secrets.get.start");
+  log('info', 'secrets.get.start');
   cachedSecret = await getDbSecret(SecretId);
-  log("info", "secrets.get.ok", { ms: stop() });
+  log('info', 'secrets.get.ok', { ms: stop() });
 
   const connectionLimit = Math.min(
     32,
-    Math.max(
-      2,
-      CHUNK_PARALLELISM * Math.min(Math.max(CHUNK_CONCURRENCY, 1), 4),
-    ),
+    Math.max(2, CHUNK_PARALLELISM * Math.min(Math.max(CHUNK_CONCURRENCY, 1), 4)),
   );
 
   stop = stopTime();
   const pool = mysql.createPool({
     host: RDS_PROXY_ENDPOINT,
-    user: cachedSecret!.username,
-    password: cachedSecret!.password,
-    database: "ops",
+    user: cachedSecret?.username ?? '',
+    password: cachedSecret?.password ?? '',
+    database: 'ops',
     waitForConnections: true,
-    connectionLimit: 2, // per lambda instance which makes it 5x2 = 10
+    connectionLimit: 2,
     queueLimit: 0,
     enableKeepAlive: true,
-    ssl: { rejectUnauthorized: true, minVersion: "TLSv1.2" },
+    ssl: { rejectUnauthorized: true, minVersion: 'TLSv1.2' },
     connectTimeout: 5000,
     connectAttributes: {
-      program_name: "writer-lambda",
-      component: "writer",
+      program_name: 'writer-lambda',
+      component: 'writer',
     },
   });
-  log("info", "pool.create.ok", { ms: stop(), connectionLimit });
+  log('info', 'pool.create.ok', { ms: stop(), connectionLimit });
 
   stop = stopTime();
   const connection = await pool.getConnection();
-  log("info", "pool.getConnection.ok", { ms: stop() });
+  log('info', 'pool.getConnection.ok', { ms: stop() });
   stop = stopTime();
   await connection.ping();
-  log("info", "db.ping.ok", { ms: stop() });
+  log('info', 'db.ping.ok', { ms: stop() });
   connection.release();
 
   return pool;
@@ -162,18 +243,20 @@ export async function getPool(
 
 async function processOne(pool: mysql.Pool, envelope: Envelope) {
   const row = envelope.data ?? {};
+  const updated = isRecord(row) ? row.updated_ts : undefined;
   const effectiveTs =
-    typeof row.updated_ts === "string" ? row.updated_ts : isoMs();
+    typeof updated === 'string' || updated instanceof Date ? isoMs(updated) : isoMs();
 
   const handler = ENTITY_HANDLERS[envelope.entity];
   if (!handler) {
-    log("warn", "record.unknown", { entity: envelope.entity });
+    log('warn', 'record.unknown', { entity: envelope.entity });
     return;
   }
 
-  return envelope.op === "delete"
-    ? handler.remove(pool, row, effectiveTs)
-    : handler.upsert(pool, row, effectiveTs);
+  if (envelope.op === 'delete') {
+    return handler.remove(pool, row, effectiveTs);
+  }
+  return handler.upsert(pool, row, effectiveTs);
 }
 
 export async function processChunk(
@@ -189,7 +272,7 @@ export async function processChunk(
     minTimeout: config.backoffMs,
     maxTimeout: config.maxBackoffMs,
     randomize: true,
-    shouldRetry: ({ error }: any) => isTransient(error),
+    shouldRetry: ({ error }: { error: unknown }) => isTransient(error),
     onFailedAttempt: () => {
       result.retried++;
     },
@@ -201,13 +284,14 @@ export async function processChunk(
       try {
         await pRetry(() => processOne(pool, item), retryOptions);
         result.ok++;
-      } catch (err: any) {
+      } catch (err) {
+        const e = err as SqlError;
         result.failed++;
-        await sendToDLQ({ item, error: serializeErr(err) });
+        sendToDLQ({ item, error: serializeErr(e) });
         result.errors.push({
           index,
-          entity: String((item as any).entity),
-          reason: shortErr(err),
+          entity: String(item.entity),
+          reason: shortErr(e),
         });
       }
     },
@@ -217,70 +301,137 @@ export async function processChunk(
   return result;
 }
 
-const isTransient = (err: any): boolean => {
-  const code = err?.code ?? err?.errno ?? err?.sqlState;
-  const msg = (err?.message ?? "").toLowerCase();
+const isTransient = (err: unknown): boolean => {
+  const e = err as SqlError | undefined;
+  const code = e?.code;
+  const errno = e?.errno;
+  const state = e?.sqlState;
+  const msg = (e?.message ?? '').toLowerCase();
   return (
-    code === "ER_LOCK_DEADLOCK" ||
-    code === 1213 ||
-    code === 1205 ||
-    code === "PROTOCOL_CONNECTION_LOST" ||
-    code === "ECONNRESET" ||
-    msg.includes("deadlock") ||
-    msg.includes("lock wait timeout") ||
-    msg.includes("timeout exceeded") ||
-    msg.includes("connection lost")
+    code === 'ER_LOCK_DEADLOCK' ||
+    errno === 1213 ||
+    errno === 1205 ||
+    code === 'PROTOCOL_CONNECTION_LOST' ||
+    code === 'ECONNRESET' ||
+    msg.includes('deadlock') ||
+    msg.includes('lock wait timeout') ||
+    msg.includes('timeout exceeded') ||
+    msg.includes('connection lost') ||
+    state === '40001'
   );
 };
 
-const shortErr = (e: any) => `${e?.code ?? ""} ${e?.message ?? e}`;
+const shortErr = (e: unknown): string => {
+  const x = e as SqlError | undefined;
+  const c = x?.code ?? '';
+  const m = x?.message ?? String(e);
+  return `${String(c)} ${m}`.trim();
+};
 
-const serializeErr = (e: any) => ({
-  code: e?.code,
-  errno: e?.errno,
-  sqlState: e?.sqlState,
-  message: e?.message,
-  stack: e?.stack,
-});
+const serializeErr = (e: unknown) => {
+  const x = e as SqlError | undefined;
+  return {
+    code: x?.code,
+    errno: x?.errno,
+    sqlState: x?.sqlState,
+    message: x?.message,
+    stack: x?.stack,
+  };
+};
 
-async function sendToDLQ(payload: any) {
-  // TODO: need to decide on destination
-  log("warn", "dlq.sent", { payload });
+function sendToDLQ(payload: unknown) {
+  log('warn', 'dlq.sent', { payload });
+}
+
+const asString = (v: unknown, def = ''): string =>
+  typeof v === 'string' ? v : v == null ? def : '';
+
+const asNumber = (v: unknown, def = 0): number => {
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    return v;
+  }
+  const n = Number(v);
+  return Number.isFinite(n) ? n : def;
+};
+
+function coerceCachedSecret(u: unknown): CachedSecret {
+  if (!isRecord(u)) {
+    throw new Error('Secret JSON must be an object');
+  }
+  const r = u as RawSecret;
+  const username = asString(r.username);
+  const password = asString(r.password);
+  if (!username || !password) {
+    throw new Error('Secret missing username/password');
+  }
+
+  return {
+    dbClusterIdentifier: asString(r.dbClusterIdentifier),
+    password,
+    dbname: asString(r.dbname),
+    engine: asString(r.engine),
+    port: asNumber(r.port, 3306),
+    host: asString(r.host),
+    username,
+  };
 }
 
 export async function getDbSecret(SecretId: string) {
-  if (cachedSecret) return cachedSecret;
-  const url = `http://localhost:2773/secretsmanager/get?secretId=${encodeURIComponent(SecretId)}&versionStage=AWSCURRENT`;
+  if (cachedSecret) {
+    return cachedSecret;
+  }
+
+  const url = `http://localhost:2773/secretsmanager/get?secretId=${encodeURIComponent(
+    SecretId,
+  )}&versionStage=AWSCURRENT`;
+
   const res = await fetch(url, {
-    headers: { "X-Aws-Parameters-Secrets-Token": TOKEN },
+    headers: { 'X-Aws-Parameters-Secrets-Token': TOKEN },
   });
-  if (!res.ok)
+  if (!res.ok) {
     throw new Error(`Extension error ${res.status} ${await res.text()}`);
-  const body = (await res.json()) as any;
-  const value = body.SecretString
-    ? JSON.parse(body.SecretString)
-    : JSON.parse(Buffer.from(body.SecretBinary, "base64").toString("utf8"));
+  }
+
+  const bodyUnknown: unknown = await res.json();
+  const body = bodyUnknown as SecretsGetResponse;
+
+  const jsonStr =
+    body.SecretString ?? Buffer.from(body.SecretBinary ?? '', 'base64').toString('utf8');
+
+  const parsedUnknown: unknown = JSON.parse(jsonStr);
+  const value: CachedSecret = coerceCachedSecret(parsedUnknown);
+
   cachedSecret = value;
   return value;
 }
 
+const isString = (v: unknown): v is string => typeof v === 'string';
+
 export async function getParam(name: string): Promise<string | null> {
-  const url = `http://localhost:2773/systemsmanager/parameters/get?name=${encodeURIComponent(name)}&withDecryption=false`;
+  const url = `http://localhost:2773/systemsmanager/parameters/get?name=${encodeURIComponent(
+    name,
+  )}&withDecryption=false`;
+
   const res = await fetch(url, {
-    headers: { "X-Aws-Parameters-Secrets-Token": TOKEN },
+    headers: { 'X-Aws-Parameters-Secrets-Token': TOKEN },
   });
-  if (!res.ok)
+  if (!res.ok) {
     throw new Error(`Extension error ${res.status} ${await res.text()}`);
-  const body = (await res.json()) as any;
-  return body?.Parameter?.Value ?? null;
+  }
+
+  const bodyUnknown: unknown = await res.json();
+  const body = bodyUnknown as SsmParamResponse;
+
+  const v = body.Parameter?.Value;
+  return isString(v) ? v : null;
 }
 
 export async function seedModeFromSsm(): Promise<ControlMode> {
   const value = await getParam(PARAM_NAME);
-  log("info", "write.param.value", value);
+  log('info', 'write.param.value', value);
   const mode: ControlMode =
-    value === "RED" || value === "YELLOW" || value === "GREEN"
+    value === 'RED' || value === 'YELLOW' || value === 'GREEN'
       ? (value as ControlMode)
-      : (DEFAULT_MODE as ControlMode);
+      : DEFAULT_MODE;
   return mode;
 }

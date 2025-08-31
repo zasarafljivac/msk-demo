@@ -1,28 +1,85 @@
-import * as mysql from "mysql2/promise";
-import { log } from "./helpers";
-import { SQL } from "./sql";
-import { parse as uuidParse } from "uuid";
+import type * as mysql from 'mysql2/promise';
+import { parse as uuidParse } from 'uuid';
+
+import { log } from './helpers';
+import { SQL } from './sql';
+
+type UuidInput = Buffer | Uint8Array | string;
 
 export const asBin16 = (input: unknown): Buffer => {
-  if (Buffer.isBuffer(input))
+  if (Buffer.isBuffer(input)) {
     return input.length === 16 ? input : Buffer.from(input);
-  if (input instanceof Uint8Array) return Buffer.from(input);
-  if (typeof input === "string") return Buffer.from(uuidParse(input));
-  throw new Error("asBin16: unsupported id type");
+  }
+  if (input instanceof Uint8Array) {
+    return Buffer.from(input);
+  }
+  if (typeof input === 'string') {
+    return Buffer.from(uuidParse(input));
+  }
+  throw new Error('asBin16: unsupported id type');
 };
 
 type EntityName =
-  | "orders_ops"
-  | "shipments_ops"
-  | "shipment_events_ops"
-  | "invoices_ops"
-  | "invoice_items_ops";
+  | 'orders_ops'
+  | 'shipments_ops'
+  | 'shipment_events_ops'
+  | 'invoices_ops'
+  | 'invoice_items_ops';
 
-type UpsertHandler = (
-  pool: mysql.Pool,
-  row: any,
-  effectiveTs: string,
-) => Promise<unknown>;
+interface OrdersRow {
+  order_id: UuidInput;
+  partner_id: string;
+  status: string;
+  total_amount?: number;
+  currency?: string;
+  is_deleted?: boolean;
+}
+
+interface ShipmentsRow {
+  shipment_id: UuidInput;
+  order_id: UuidInput;
+  carrier_code: string;
+  status: string;
+  tracking_no?: string | null;
+  is_deleted?: boolean;
+}
+
+interface ShipmentEventsRow {
+  event_id: string;
+  shipment_id: UuidInput;
+  event_type: string;
+  status?: string | null;
+  event_time: string;
+  location_code?: string | null;
+  details_json?: unknown;
+  is_deleted?: boolean;
+}
+
+interface InvoicesRow {
+  invoice_id: UuidInput;
+  order_id: UuidInput;
+  partner_id: string;
+  status: string;
+  total_amount?: number;
+  currency?: string;
+  issued_ts?: string | null;
+  due_ts?: string | null;
+  paid_ts?: string | null;
+  is_deleted?: boolean;
+}
+
+interface InvoiceItemsRow {
+  invoice_id: UuidInput;
+  line_no: number;
+  sku: string;
+  description?: string | null;
+  quantity?: number;
+  unit_price?: number;
+  line_amount?: number;
+  is_deleted?: boolean;
+}
+
+type UpsertHandler = (pool: mysql.Pool, row: unknown, effectiveTs: string) => Promise<unknown>;
 type DeleteHandler = UpsertHandler;
 
 export const stopTime = () => {
@@ -30,17 +87,15 @@ export const stopTime = () => {
   return () => Date.now() - s;
 };
 
-async function exec(
-  pool: mysql.Pool,
-  label: string,
-  sql: string,
-  params: any[],
-) {
+async function exec(pool: mysql.Pool, label: string, sql: string, params: unknown[]) {
   const stop = stopTime();
   const [res] = await pool.query(sql, params);
   const ms = stop();
-  if (ms > 1000) log("warn", "sql.exec.slow", { label, ms });
-  else log("debug", "sql.exec.ok", { label, ms });
+  if (ms > 1000) {
+    log('warn', 'sql.exec.slow', { label, ms });
+  } else {
+    log('debug', 'sql.exec.ok', { label, ms });
+  }
   return res;
 }
 
@@ -48,7 +103,7 @@ async function softDelete(
   pool: mysql.Pool,
   table: EntityName,
   whereClause: string,
-  params: any[],
+  params: unknown[],
   updated_ts: string,
 ) {
   const sql = `UPDATE ${table}
@@ -57,126 +112,130 @@ async function softDelete(
   return exec(pool, `${table}.softDelete`, sql, [updated_ts, ...params]);
 }
 
-export const ENTITY_HANDLERS: Record<
-  EntityName,
-  { upsert: UpsertHandler; remove: DeleteHandler }
-> = {
-  orders_ops: {
-    remove: (pool, row, effectiveTs) =>
-      softDelete(
-        pool,
-        "orders_ops",
-        "order_id=?",
-        [asBin16(row.order_id)],
-        effectiveTs,
-      ),
-    upsert: (pool, row, effectiveTs) =>
-      exec(pool, "orders_upsert", SQL.orders_upsert, [
-        asBin16(row.order_id),
-        row.partner_id,
-        row.status,
-        row.total_amount ?? 0,
-        row.currency || "USD",
-        effectiveTs,
-        !!row.is_deleted,
-      ]),
-  },
-
-  shipments_ops: {
-    remove: (pool, row, effectiveTs) =>
-      softDelete(
-        pool,
-        "shipments_ops",
-        "shipment_id=?",
-        [asBin16(row.shipment_id)],
-        effectiveTs,
-      ),
-    upsert: (pool, row, effectiveTs) =>
-      exec(pool, "shipments_upsert", SQL.shipments_upsert, [
-        asBin16(row.shipment_id),
-        asBin16(row.order_id),
-        row.carrier_code,
-        row.status,
-        row.tracking_no ?? null,
-        effectiveTs,
-        !!row.is_deleted,
-      ]),
-  },
-
-  shipment_events_ops: {
-    remove: (pool, row, effectiveTs) =>
-      softDelete(
-        pool,
-        "shipment_events_ops",
-        "event_id=?",
-        [row.event_id],
-        effectiveTs,
-      ),
-    upsert: (pool, row, effectiveTs) => {
-      const detailsJson =
-        typeof row.details_json === "string"
-          ? row.details_json
-          : JSON.stringify(row.details_json ?? null);
-      return exec(pool, "shipment_events_upsert", SQL.shipment_events_upsert, [
-        row.event_id,
-        asBin16(row.shipment_id),
-        row.event_type,
-        row.status ?? null,
-        row.event_time,
-        row.location_code ?? null,
-        detailsJson,
-        effectiveTs,
-        !!row.is_deleted,
-      ]);
+export const ENTITY_HANDLERS: Record<EntityName, { upsert: UpsertHandler; remove: DeleteHandler }> =
+  {
+    orders_ops: {
+      remove: (pool, row, effectiveTs) => {
+        const r = row as OrdersRow;
+        return softDelete(pool, 'orders_ops', 'order_id=?', [asBin16(r.order_id)], effectiveTs);
+      },
+      upsert: (pool, row, effectiveTs) => {
+        const r = row as OrdersRow;
+        return exec(pool, 'orders_upsert', SQL.orders_upsert, [
+          asBin16(r.order_id),
+          r.partner_id,
+          r.status,
+          r.total_amount ?? 0,
+          r.currency ?? 'USD',
+          effectiveTs,
+          !!r.is_deleted,
+        ]);
+      },
     },
-  },
 
-  invoices_ops: {
-    remove: (pool, row, effectiveTs) =>
-      softDelete(
-        pool,
-        "invoices_ops",
-        "invoice_id=?",
-        [asBin16(row.invoice_id)],
-        effectiveTs,
-      ),
-    upsert: (pool, row, effectiveTs) =>
-      exec(pool, "invoices_upsert", SQL.invoices_upsert, [
-        asBin16(row.invoice_id),
-        asBin16(row.order_id),
-        row.partner_id,
-        row.status,
-        row.total_amount ?? 0,
-        row.currency || "USD",
-        row.issued_ts ?? null,
-        row.due_ts ?? null,
-        row.paid_ts ?? null,
-        effectiveTs,
-        !!row.is_deleted,
-      ]),
-  },
+    shipments_ops: {
+      remove: (pool, row, effectiveTs) => {
+        const r = row as ShipmentsRow;
+        return softDelete(
+          pool,
+          'shipments_ops',
+          'shipment_id=?',
+          [asBin16(r.shipment_id)],
+          effectiveTs,
+        );
+      },
+      upsert: (pool, row, effectiveTs) => {
+        const r = row as ShipmentsRow;
+        return exec(pool, 'shipments_upsert', SQL.shipments_upsert, [
+          asBin16(r.shipment_id),
+          asBin16(r.order_id),
+          r.carrier_code,
+          r.status,
+          r.tracking_no ?? null,
+          effectiveTs,
+          !!r.is_deleted,
+        ]);
+      },
+    },
 
-  invoice_items_ops: {
-    remove: (pool, row, effectiveTs) =>
-      softDelete(
-        pool,
-        "invoice_items_ops",
-        "invoice_id=? AND line_no=?",
-        [asBin16(row.invoice_id), row.line_no],
-        effectiveTs,
-      ),
+    shipment_events_ops: {
+      remove: (pool, row, effectiveTs) => {
+        const r = row as ShipmentEventsRow;
+        return softDelete(pool, 'shipment_events_ops', 'event_id=?', [r.event_id], effectiveTs);
+      },
+      upsert: (pool, row, effectiveTs) => {
+        const r = row as ShipmentEventsRow;
+        const detailsJson =
+          typeof r.details_json === 'string'
+            ? r.details_json
+            : JSON.stringify(r.details_json ?? null);
+        return exec(pool, 'shipment_events_upsert', SQL.shipment_events_upsert, [
+          r.event_id,
+          asBin16(r.shipment_id),
+          r.event_type,
+          r.status ?? null,
+          r.event_time,
+          r.location_code ?? null,
+          detailsJson,
+          effectiveTs,
+          !!r.is_deleted,
+        ]);
+      },
+    },
 
-    upsert: (pool, row, effectiveTs) =>
-      exec(pool, "invoice_items_upsert", SQL.invoice_items_upsert, [
-        asBin16(row.invoice_id),
-        row.line_no,
-        row.sku,
-        row.description ?? null,
-        row.quantity ?? 0,
-        row.unit_price ?? 0,
-        row.line_amount ?? 0,
-        effectiveTs,
-        !!row.is_deleted,
-      ]),
-  },
-};
+    invoices_ops: {
+      remove: (pool, row, effectiveTs) => {
+        const r = row as InvoicesRow;
+        return softDelete(
+          pool,
+          'invoices_ops',
+          'invoice_id=?',
+          [asBin16(r.invoice_id)],
+          effectiveTs,
+        );
+      },
+      upsert: (pool, row, effectiveTs) => {
+        const r = row as InvoicesRow;
+        return exec(pool, 'invoices_upsert', SQL.invoices_upsert, [
+          asBin16(r.invoice_id),
+          asBin16(r.order_id),
+          r.partner_id,
+          r.status,
+          r.total_amount ?? 0,
+          r.currency ?? 'USD',
+          r.issued_ts ?? null,
+          r.due_ts ?? null,
+          r.paid_ts ?? null,
+          effectiveTs,
+          !!r.is_deleted,
+        ]);
+      },
+    },
+
+    invoice_items_ops: {
+      remove: (pool, row, effectiveTs) => {
+        const r = row as InvoiceItemsRow;
+        return softDelete(
+          pool,
+          'invoice_items_ops',
+          'invoice_id=? AND line_no=?',
+          [asBin16(r.invoice_id), r.line_no],
+          effectiveTs,
+        );
+      },
+      upsert: (pool, row, effectiveTs) => {
+        const r = row as InvoiceItemsRow;
+        return exec(pool, 'invoice_items_upsert', SQL.invoice_items_upsert, [
+          asBin16(r.invoice_id),
+          r.line_no,
+          r.sku,
+          r.description ?? null,
+          r.quantity ?? 0,
+          r.unit_price ?? 0,
+          r.line_amount ?? 0,
+          effectiveTs,
+          !!r.is_deleted,
+        ]);
+      },
+    },
+  };

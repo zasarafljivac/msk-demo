@@ -1,9 +1,11 @@
-import { Stack, StackProps, CfnOutput } from "aws-cdk-lib";
-import { Construct } from "constructs";
-import { LambdaConstruct } from "../cdk-constructs/lambda-construct";
-import { NetworkStack } from "./network-stack";
-import { MskStack } from "./msk-stack";
-import { DatabaseStack } from "./database-stack";
+import type { StackProps } from 'aws-cdk-lib';
+import { CfnOutput, Stack } from 'aws-cdk-lib';
+import type { Construct } from 'constructs';
+
+import { LambdaConstruct } from '../cdk-constructs/lambda-construct';
+import type { DatabaseStack } from './database-stack';
+import type { MskStack } from './msk-stack';
+import type { NetworkStack } from './network-stack';
 
 export class ComputeStack extends Stack {
   readonly lambdas: LambdaConstruct;
@@ -22,7 +24,7 @@ export class ComputeStack extends Stack {
   ) {
     super(scope, id, props);
 
-    this.lambdas = new LambdaConstruct(this, "LambdaSet", {
+    this.lambdas = new LambdaConstruct(this, 'LambdaSet', {
       vpc: props.networkStack.net.vpc,
       lambdasSg: props.networkStack.net.lambdasSg,
       clusterArn: props.mskStack.msk.cluster.attrArn,
@@ -36,7 +38,7 @@ export class ComputeStack extends Stack {
       CONTROL_TOPIC: props.CONTROL_TOPIC,
     });
 
-    new CfnOutput(this, "LoadGeneratorFunction", {
+    new CfnOutput(this, 'LoadGeneratorFunction', {
       value: this.lambdas.loadGenFn.functionName,
     });
   }

@@ -1,24 +1,23 @@
-import { createHash } from "crypto";
-import {
-  v7 as uuidv7,
-  parse as uuidParse,
-  stringify as uuidStringify,
-} from "uuid";
+import { createHash } from 'crypto';
+import { parse as uuidParse, stringify as uuidStringify, v7 as uuidv7 } from 'uuid';
 
 type UuidVariants = string | Buffer | Uint8Array;
 
 const newBinaryId = (): Buffer => Buffer.from(uuidParse(uuidv7()));
-const binaryIdToString = (idBin: Buffer): string =>
-  uuidStringify(new Uint8Array(idBin));
+const binaryIdToString = (idBin: Buffer): string => uuidStringify(new Uint8Array(idBin));
 const stringToBinaryId = (uuidStr: string) => Buffer.from(uuidParse(uuidStr));
 
 const normalizeUuid = (id: UuidVariants): string => {
-  if (typeof id === "string") return id.trim().toLowerCase();
-  if (id instanceof Uint8Array || Buffer.isBuffer(id)) {
-    if (id.length === 16) return uuidStringify(id as Uint8Array).toLowerCase();
-    return Buffer.from(id).toString("hex").toLowerCase();
+  if (typeof id === 'string') {
+    return id.trim().toLowerCase();
   }
-  throw new Error("Unsupported uuid type");
+  if (id instanceof Uint8Array || Buffer.isBuffer(id)) {
+    if (id.length === 16) {
+      return uuidStringify(id as Uint8Array).toLowerCase();
+    }
+    return Buffer.from(id).toString('hex').toLowerCase();
+  }
+  throw new Error('Unsupported uuid type');
 };
 
 const makeEventId = (shipmentData: {
@@ -31,9 +30,9 @@ const makeEventId = (shipmentData: {
     id: normalizeUuid(shipmentData.shipment_id),
     etype: shipmentData.event_type.trim().toUpperCase(),
     etime: new Date(shipmentData.event_time).toISOString(),
-    l: (shipmentData.location_code ?? "").trim().toUpperCase(),
+    l: (shipmentData.location_code ?? '').trim().toUpperCase(),
   });
-  return createHash("sha256").update(composite).digest("hex").slice(0, 24);
+  return createHash('sha256').update(composite).digest('hex').slice(0, 24);
 };
 
 export const ids = {

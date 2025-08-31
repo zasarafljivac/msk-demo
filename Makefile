@@ -15,10 +15,11 @@ STACK_DB ?= MskDemo-Database
 STACK_COMPUTE ?= MskDemo-Compute
 STACK_INTEGRATION ?= MskDemo-Integration
 
-.PHONY: help deps bootstrap synth diff deploy-network deploy-msk deploy-db deploy-compute deploy-integration deploy-all deploy destroy-all outputs stack-outputs loadgen loadgen-parallel install forward-rds-port
+.PHONY: help lint format deps bootstrap synth diff deploy-network deploy-msk deploy-db deploy-compute deploy-integration deploy-all deploy destroy-all outputs stack-outputs loadgen loadgen-parallel install forward-rds-port
 
 help:
 	@echo "make deps # npm ci install dependencies"
+	@echo "make pretty # run lint and prettier"
 	@echo "make bootstrap # npm ci + CDK bootstrap for $(ACCOUNT)/$(REGION)"
 	@echo "make synth # build tsc then cdk synth (all stacks)"
 	@echo "make diff # cdk diff (all stacks)"
@@ -30,6 +31,10 @@ help:
 	@echo "make loadgen # generate load in a single thread (single lambda) with the default values"
 	@echo "make loadgen-parallel # generate load in parallel to achieve spike in traffic with defaults close to 360 msg/s"
 	@echo "make forward-rds-port # forward 3307 to remote 3306 over bastion to connect to private network from localhost"
+
+pretty:
+	npm run lint
+	npm run format
 
 deps:
 	npm ci

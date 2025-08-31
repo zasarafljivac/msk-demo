@@ -1,10 +1,11 @@
-import * as cdk from "aws-cdk-lib";
-import { NetworkStack } from "./cdk-stacks/network-stack";
-import { MskStack } from "./cdk-stacks/msk-stack";
-import { DatabaseStack } from "./cdk-stacks/database-stack";
-import { ComputeStack } from "./cdk-stacks/compute-stack";
-import { IntegrationStack } from "./cdk-stacks/integration-stack";
-import { ISecurityGroup, IVpc } from "aws-cdk-lib/aws-ec2";
+import * as cdk from 'aws-cdk-lib';
+import type { ISecurityGroup, IVpc } from 'aws-cdk-lib/aws-ec2';
+
+import { ComputeStack } from './cdk-stacks/compute-stack';
+import { DatabaseStack } from './cdk-stacks/database-stack';
+import { IntegrationStack } from './cdk-stacks/integration-stack';
+import { MskStack } from './cdk-stacks/msk-stack';
+import { NetworkStack } from './cdk-stacks/network-stack';
 
 export interface DatabaseStackProps extends cdk.StackProps {
   vpc: IVpc;
@@ -13,9 +14,9 @@ export interface DatabaseStackProps extends cdk.StackProps {
   bastionSg: ISecurityGroup;
 }
 
-const BUFFER_TOPIC = "msk-demo-buffer";
-const SOURCE_TOPIC = "msk-demo-source";
-const CONTROL_TOPIC = "msk-demo-db-health";
+const BUFFER_TOPIC = 'msk-demo-buffer';
+const SOURCE_TOPIC = 'msk-demo-source';
+const CONTROL_TOPIC = 'msk-demo-db-health';
 
 const app = new cdk.App();
 const env = {
@@ -23,7 +24,7 @@ const env = {
   region: process.env.CDK_DEFAULT_REGION,
 };
 
-const networkStack = new NetworkStack(app, "MskDemo-Network", {
+const networkStack = new NetworkStack(app, 'MskDemo-Network', {
   env,
 });
 
@@ -34,16 +35,16 @@ const dbProps: DatabaseStackProps = {
   dbSg: networkStack.net.dbSg,
 };
 
-const mskStack = new MskStack(app, "MskDemo-Msk", {
+const mskStack = new MskStack(app, 'MskDemo-Msk', {
   env,
   networkStack,
 });
 
-const databaseStack = new DatabaseStack(app, "MskDemo-Database", {
+const databaseStack = new DatabaseStack(app, 'MskDemo-Database', {
   env,
   ...dbProps,
 });
-const computeStack = new ComputeStack(app, "MskDemo-Compute", {
+const computeStack = new ComputeStack(app, 'MskDemo-Compute', {
   env,
   networkStack,
   mskStack,
@@ -54,7 +55,7 @@ const computeStack = new ComputeStack(app, "MskDemo-Compute", {
   CONTROL_TOPIC,
 });
 
-new IntegrationStack(app, "MskDemo-Integration", {
+new IntegrationStack(app, 'MskDemo-Integration', {
   env,
   mskStack,
   computeStack,

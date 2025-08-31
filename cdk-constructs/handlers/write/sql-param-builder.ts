@@ -15,7 +15,7 @@ export const params = {
     data.partner_id,
     data.status,
     data.total_amount,
-    data.currency ?? "USD",
+    data.currency ?? 'USD',
     toISO(data.updated_ts)!,
     Number(!!data.is_deleted),
   ],
@@ -45,7 +45,7 @@ export const params = {
     status?: string | null;
     event_time: string | Date;
     location_code?: string | null;
-    details_json?: any;
+    details_json?: JSON;
     updated_ts: string | Date;
     is_deleted?: boolean | number;
   }) => [
@@ -78,7 +78,7 @@ export const params = {
     data.partner_id,
     data.status,
     data.total_amount,
-    data.currency ?? "USD",
+    data.currency ?? 'USD',
     toISO(data.issued_ts),
     toISO(data.due_ts),
     toISO(data.paid_ts),

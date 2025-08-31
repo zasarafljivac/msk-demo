@@ -1,18 +1,18 @@
-import { Kafka, Partitioners, Producer } from "kafkajs";
-import { generateAuthToken } from "aws-msk-iam-sasl-signer-js";
+import { generateAuthToken } from 'aws-msk-iam-sasl-signer-js';
+import type { Producer } from 'kafkajs';
+import { Kafka, Partitioners } from 'kafkajs';
 
 export async function getProducer(
   clientId: string,
   bootstrapBrokers: string,
   region: string,
 ): Promise<Producer> {
-  let producer: Producer;
   const kafka = new Kafka({
     clientId,
-    brokers: bootstrapBrokers.split(","),
+    brokers: bootstrapBrokers.split(','),
     ssl: true,
     sasl: {
-      mechanism: "oauthbearer",
+      mechanism: 'oauthbearer',
       oauthBearerProvider: async () => {
         const { token } = await generateAuthToken({ region });
         return { value: token };
@@ -20,7 +20,7 @@ export async function getProducer(
     },
   });
 
-  producer = kafka.producer({
+  const producer = kafka.producer({
     allowAutoTopicCreation: false,
     idempotent: true,
     createPartitioner: Partitioners.DefaultPartitioner,
