@@ -2,6 +2,8 @@
   "name": "near-realtime-ingestion-cdk",
   "version": "0.2.0",
   "dependencies": {
+    "@aws-sdk/client-apigatewaymanagementapi": "^3.879.0",
+    "@aws-sdk/client-dynamodb": "^3.879.0",
     "@aws-sdk/client-kafka": "^3.600.0",
     "@aws-sdk/client-secrets-manager": "^3.876.0",
     "aws-cdk-lib": "2.212.0",
@@ -17,6 +19,7 @@
   "devDependencies": {
     "@eslint/js": "^9.34.0",
     "@smithy/types": "^4.3.2",
+    "@types/aws-lambda": "^8.10.152",
     "@typescript-eslint/eslint-plugin": "^8.41.0",
     "@typescript-eslint/parser": "^8.41.0",
     "esbuild": "^0.19.11",

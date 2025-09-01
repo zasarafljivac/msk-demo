@@ -1,6 +1,5 @@
-import { CfnOutput, RemovalPolicy, Stack } from 'aws-cdk-lib';
+import { CfnOutput, Stack } from 'aws-cdk-lib';
 import type { ISecurityGroup, IVpc } from 'aws-cdk-lib/aws-ec2';
-import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { CfnCluster } from 'aws-cdk-lib/aws-msk';
 import * as cr from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
@@ -10,17 +9,11 @@ export interface MskClusterConstructProps {
   mskSg: ISecurityGroup;
 }
 export class MskClusterConstruct extends Construct {
-  readonly logGroup: LogGroup;
   readonly cluster: CfnCluster;
   readonly bootstrapBrokersSaslIam: string;
 
   constructor(scope: Construct, id: string, props: MskClusterConstructProps) {
     super(scope, id);
-
-    this.logGroup = new LogGroup(this, 'MskLogs', {
-      retention: RetentionDays.ONE_WEEK,
-      removalPolicy: RemovalPolicy.DESTROY,
-    });
 
     this.cluster = new CfnCluster(this, 'Msk', {
       clusterName: `${Stack.of(this).stackName}-demo`,
@@ -43,14 +36,6 @@ export class MskClusterConstruct extends Construct {
         encryptionInTransit: {
           clientBroker: 'TLS',
           inCluster: true,
-        },
-      },
-      loggingInfo: {
-        brokerLogs: {
-          cloudWatchLogs: {
-            enabled: true,
-            logGroup: this.logGroup.logGroupName,
-          },
         },
       },
     });

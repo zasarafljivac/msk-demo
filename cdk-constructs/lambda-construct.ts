@@ -14,6 +14,7 @@ import * as path from 'path';
 import { cwd } from 'process';
 
 import { DbHealthAlarms } from './db-health-alarms-contruct';
+import { EventBridgeConstruct } from './event-bridge-construct';
 
 export interface LambdaConstructProps {
   vpc: IVpc;
@@ -27,6 +28,8 @@ export interface LambdaConstructProps {
   SOURCE_TOPIC: string;
   BUFFER_TOPIC: string;
   CONTROL_TOPIC: string;
+  CONNECTIONS_TABLE: string;
+  WS_ENDPOINT: string;
 }
 export class LambdaConstruct extends Construct {
   readonly createSchemaFn: IFunction;
@@ -41,7 +44,7 @@ export class LambdaConstruct extends Construct {
 
     const mkLog = (name: string) =>
       new LogGroup(this, `${name}LogGroup`, {
-        retention: RetentionDays.ONE_WEEK,
+        retention: RetentionDays.ONE_DAY,
         removalPolicy: RemovalPolicy.DESTROY,
       });
 
@@ -147,6 +150,10 @@ export class LambdaConstruct extends Construct {
       iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaVPCAccessExecutionRole'),
     );
     this.attachMskPolicies(this.loadGenFn);
+    const loadGenBurstSchedule = new EventBridgeConstruct(this, 'LoadGenBurstSchedule', {
+      loadGenFn: this.loadGenFn,
+    });
+    loadGenBurstSchedule.node.addDependency(this.loadGenFn);
 
     this.transformFn = new NodejsFunction(this, 'TransformFunction', {
       runtime: Runtime.NODEJS_22_X,
@@ -246,6 +253,8 @@ export class LambdaConstruct extends Construct {
         PARAMETERS_SECRETS_EXTENSION_CACHE_SIZE: '1000',
         DB_CONTROL_PARAM: '/msk-demo/db-mode',
         DEFAULT_MODE: 'GREEN',
+        CONNECTIONS_TABLE: props.CONNECTIONS_TABLE,
+        WS_ENDPOINT: props.WS_ENDPOINT,
       },
       layers: [layer],
     });

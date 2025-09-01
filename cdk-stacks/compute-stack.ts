@@ -20,6 +20,8 @@ export class ComputeStack extends Stack {
       BUFFER_TOPIC: string;
       SOURCE_TOPIC: string;
       CONTROL_TOPIC: string;
+      CONNECTIONS_TABLE: string;
+      WS_ENDPOINT: string;
     },
   ) {
     super(scope, id, props);
@@ -36,6 +38,8 @@ export class ComputeStack extends Stack {
       BUFFER_TOPIC: props.BUFFER_TOPIC,
       SOURCE_TOPIC: props.SOURCE_TOPIC,
       CONTROL_TOPIC: props.CONTROL_TOPIC,
+      CONNECTIONS_TABLE: props.CONNECTIONS_TABLE,
+      WS_ENDPOINT: props.WS_ENDPOINT,
     });
 
     new CfnOutput(this, 'LoadGeneratorFunction', {

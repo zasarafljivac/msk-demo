@@ -25,6 +25,7 @@ module.exports = [
       '**/.serverless/**',
       '**/cdk.out/**',
       '**/coverage/**',
+      '**/dashboard/**',
     ],
   },
 
@@ -57,7 +58,7 @@ module.exports = [
       '@typescript-eslint': tseslint.plugin,
     },
     rules: {
-      'n/no-missing-import': 'error',
+      'n/no-missing-import': ['error', { allowModules: ['aws-lambda'] }],
       'n/no-process-exit': 'off',
       'unused-imports/no-unused-imports': 'error',
       'unused-imports/no-unused-vars': [

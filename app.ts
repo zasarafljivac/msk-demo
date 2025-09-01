@@ -6,6 +6,7 @@ import { DatabaseStack } from './cdk-stacks/database-stack';
 import { IntegrationStack } from './cdk-stacks/integration-stack';
 import { MskStack } from './cdk-stacks/msk-stack';
 import { NetworkStack } from './cdk-stacks/network-stack';
+import { WebSocketStack } from './cdk-stacks/websocket-stack';
 
 export interface DatabaseStackProps extends cdk.StackProps {
   vpc: IVpc;
@@ -14,9 +15,16 @@ export interface DatabaseStackProps extends cdk.StackProps {
   bastionSg: ISecurityGroup;
 }
 
+export interface WebSocketStackProps extends cdk.StackProps {
+  writeFnArn: string;
+  writeFnRoleArn: string;
+}
+
 const BUFFER_TOPIC = 'msk-demo-buffer';
 const SOURCE_TOPIC = 'msk-demo-source';
 const CONTROL_TOPIC = 'msk-demo-db-health';
+const CONNECTIONS_TABLE = '/msk-demo/connections-table';
+const WS_ENDPOINT = '/msk-demo/ws-endpoint';
 
 const app = new cdk.App();
 const env = {
@@ -53,6 +61,8 @@ const computeStack = new ComputeStack(app, 'MskDemo-Compute', {
   BUFFER_TOPIC,
   SOURCE_TOPIC,
   CONTROL_TOPIC,
+  CONNECTIONS_TABLE,
+  WS_ENDPOINT,
 });
 
 new IntegrationStack(app, 'MskDemo-Integration', {
@@ -62,4 +72,10 @@ new IntegrationStack(app, 'MskDemo-Integration', {
   SOURCE_TOPIC,
   BUFFER_TOPIC,
   CONTROL_TOPIC,
+});
+
+new WebSocketStack(app, 'MskDemo-WebSocket', {
+  env,
+  writeFnArn: computeStack.lambdas.writeFn.functionArn,
+  writeFnRoleArn: computeStack.lambdas.writeFn.role!.roleArn,
 });

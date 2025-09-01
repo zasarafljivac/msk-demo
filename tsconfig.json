@@ -21,6 +21,10 @@
     "skipLibCheck": true,
     "typeRoots": ["./node_modules/@types"]
   },
-  "exclude": ["node_modules", "cdk.out", "dist"],
-  "include": ["**/*.ts"]
+  "exclude": ["node_modules", "cdk.out", "dist", "dashboard"],
+  "include": [
+    "**/*.ts",
+    "dashboard/src/state/ws-provider.tsx",
+    "dashboard/src/state/ws-context.tsz"
+  ]
 }

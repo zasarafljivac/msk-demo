@@ -2,6 +2,7 @@ import type { Pool } from 'mysql2/promise';
 import PQueue from 'p-queue';
 
 import { chunk, getPool, log, processChunk, seedModeFromSsm, setVars, toEnvelope } from './helpers';
+import { broadcastMessage, writeSnapshot } from './ws';
 
 type EntityName =
   | 'orders_ops'
@@ -11,6 +12,14 @@ type EntityName =
   | 'invoice_items_ops';
 
 type ControlMode = 'GREEN' | 'YELLOW' | 'RED';
+
+interface Snaphot {
+  orders: number;
+  shipments: number;
+  shipmentEvents: number;
+  invoices: number;
+  invoiceItems: number;
+}
 
 interface LambdaContext {
   getRemainingTimeInMillis?: () => number;
@@ -54,6 +63,9 @@ let CHUNK_CONCURRENCY = Number.parseInt(process.env.CHUNK_CONCURRENCY ?? '2', 10
 const RDS_PROXY_ENDPOINT = process.env.RDS_PROXY_ENDPOINT ?? '';
 const TOKEN = process.env.AWS_SESSION_TOKEN ?? '';
 
+const WS_ENDPOINT = process.env.WS_ENDPOINT!;
+const CONNECTIONS_TABLE = process.env.CONNECTIONS_TABLE!;
+
 setVars({
   LOG_LEVEL,
   CHUNK_PARALLELISM,
@@ -73,6 +85,32 @@ const safeJsonParse = (s: string): unknown => {
   }
 };
 
+const getChunkStats = (chunks: Envelope[][]): Snaphot => {
+  const snap: Snaphot = {
+    orders: 0,
+    shipments: 0,
+    shipmentEvents: 0,
+    invoices: 0,
+    invoiceItems: 0,
+  };
+  for (const ch of chunks) {
+    for (const env of ch) {
+      if (env.entity === 'orders_ops') {
+        snap.orders++;
+      } else if (env.entity === 'shipments_ops') {
+        snap.shipments++;
+      } else if (env.entity === 'shipment_events_ops') {
+        snap.shipmentEvents++;
+      } else if (env.entity === 'invoices_ops') {
+        snap.invoices++;
+      } else if (env.entity === 'invoice_items_ops') {
+        snap.invoiceItems++;
+      }
+    }
+  }
+  return snap;
+};
+
 export const handler = async (event: KafkaEvent, context: LambdaContext) => {
   currentMode = currentMode ?? (await seedModeFromSsm());
 
@@ -88,6 +126,15 @@ export const handler = async (event: KafkaEvent, context: LambdaContext) => {
     budgetMs,
     groups: Object.keys(event.records ?? {}).length,
   });
+  await broadcastMessage(
+    {
+      type: 'invoke.start',
+      ts: new Date().toISOString(),
+      data: { budgetMs, groups: Object.keys(event.records ?? {}).length },
+    },
+    CONNECTIONS_TABLE,
+    WS_ENDPOINT,
+  );
 
   pool = await getPool(pool);
 
@@ -145,23 +192,57 @@ export const handler = async (event: KafkaEvent, context: LambdaContext) => {
       },
       ts: new Date().toISOString(),
     });
+
+    await broadcastMessage(
+      {
+        type: 'control.update',
+        ts: new Date().toISOString(),
+        data: { mode: currentMode },
+      },
+      CONNECTIONS_TABLE,
+      WS_ENDPOINT,
+    );
   }
 
   if (!currentMode) {
     log('warn', 'control.not.ready', { skipped: envelopes.length });
+    await broadcastMessage(
+      {
+        type: 'control.not.ready',
+        ts: new Date().toISOString(),
+        data: { skipped: envelopes.length },
+      },
+      CONNECTIONS_TABLE,
+      WS_ENDPOINT,
+    );
     return { statusCode: 200 };
   }
 
   const dataEnvelopes = envelopes.filter((e) => !e.control);
   const chunks = chunk(dataEnvelopes, CHUNK_SIZE);
 
-  log('info', 'window.plan', {
+  log('info', 'invoke.plan', {
     total: dataEnvelopes.length,
     chunkSize: CHUNK_SIZE,
     chunks: chunks.length,
     groups: CHUNK_PARALLELISM,
     perChunk: CHUNK_CONCURRENCY,
   });
+  await broadcastMessage(
+    {
+      type: 'invoke.plan',
+      ts: new Date().toISOString(),
+      data: {
+        total: dataEnvelopes.length,
+        chunkSize: CHUNK_SIZE,
+        chunks: chunks.length,
+        groups: CHUNK_PARALLELISM,
+        perChunk: CHUNK_CONCURRENCY,
+      },
+    },
+    CONNECTIONS_TABLE,
+    WS_ENDPOINT,
+  );
 
   const chunksQueue = new PQueue({ concurrency: CHUNK_PARALLELISM });
 
@@ -180,12 +261,13 @@ export const handler = async (event: KafkaEvent, context: LambdaContext) => {
 
   const msLeft = Math.max(0, deadline - Date.now());
   try {
-    await Promise.race([
+    const raceResults = await Promise.race([
       chunksQueue.onIdle(),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('TIME_BUDGET_EARLY_EXIT')), msLeft),
       ),
     ]);
+    log('info', 'chunks.processed', { scheduledChunks, raceResults });
   } catch (err) {
     const e = err as { message?: string } | undefined;
     log('warn', 'early.exit.failfast', {
@@ -199,5 +281,8 @@ export const handler = async (event: KafkaEvent, context: LambdaContext) => {
     scheduledChunks,
     tookMs: remainingTime - (context.getRemainingTimeInMillis?.() ?? 0),
   });
+
+  await writeSnapshot(getChunkStats(chunks));
+
   return { statusCode: 200 };
 };

@@ -30,6 +30,7 @@ interface LoadgenEvent {
   seconds?: number;
   mix?: string; // "orders:0.45,shipments:0.2,events:0.25,invoices:0.1"
   deletePct?: number; // 0..1
+  detail?: LoadgenEvent; // EventBridge bus
 }
 
 const BOOTSTRAP = (process.env.BOOTSTRAP_BROKERS_SASL_IAM ?? '')
@@ -446,9 +447,12 @@ export async function handler(event: LoadgenEvent = {} as LoadgenEvent): Promise
   sent: number;
   durationMs: number;
 }> {
+  const payload =
+    event && typeof event === 'object' && 'detail' in event && event.detail ? event.detail : event;
+
   const topic = event.topic ?? DEFAULT_TOPIC;
-  const rate = Number.isFinite(event.rate!) ? Number(event.rate) : 50;
-  const seconds = Number.isFinite(event.seconds!) ? Number(event.seconds) : 30;
+  const rate = Number.isFinite(payload.rate!) ? Number(payload.rate) : 20;
+  const seconds = Number.isFinite(payload.seconds!) ? Number(payload.seconds) : 1;
   const mix = parseMix(event.mix ?? process.env.MIX);
   const deletePct = event.deletePct ?? 0.02;
 
@@ -471,7 +475,9 @@ export async function handler(event: LoadgenEvent = {} as LoadgenEvent): Promise
       });
       sent += envelopes.length;
     }
-    await new Promise<void>((r) => setTimeout(r, 1000));
+    if (seconds > 1) {
+      await new Promise<void>((r) => setTimeout(r, 1000));
+    }
   }
 
   return { topic, rate, seconds, sent, durationMs: Date.now() - started };

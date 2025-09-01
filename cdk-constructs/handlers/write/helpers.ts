@@ -3,8 +3,14 @@ import pMap from 'p-map';
 import pRetry from 'p-retry';
 
 import { ENTITY_HANDLERS, stopTime } from './sql-upsert-handlers';
+import { bumpRecentActivity, writeDlqSent } from './ws';
 
 type ControlMode = 'GREEN' | 'YELLOW' | 'RED';
+
+interface DlqPayload {
+  entity?: string;
+  error: unknown;
+}
 
 type EntityName =
   | 'orders_ops'
@@ -287,7 +293,7 @@ export async function processChunk(
       } catch (err) {
         const e = err as SqlError;
         result.failed++;
-        sendToDLQ({ item, error: serializeErr(e) });
+        await sendToDLQ({ entity: item.entity, error: serializeErr(e) });
         result.errors.push({
           index,
           entity: String(item.entity),
@@ -297,7 +303,7 @@ export async function processChunk(
     },
     { concurrency: CHUNK_CONCURRENCY },
   );
-
+  await bumpRecentActivity(result);
   return result;
 }
 
@@ -339,8 +345,11 @@ const serializeErr = (e: unknown) => {
   };
 };
 
-function sendToDLQ(payload: unknown) {
-  log('warn', 'dlq.sent', { payload });
+async function sendToDLQ(payload: DlqPayload): Promise<void> {
+  log('warn', 'write.dlq.sent', payload);
+  const entity = typeof payload?.entity === 'string' ? payload.entity : 'unknown';
+  const reason = shortErr(payload.error) ?? 'no details';
+  await writeDlqSent(entity, reason);
 }
 
 const asString = (v: unknown, def = ''): string =>
