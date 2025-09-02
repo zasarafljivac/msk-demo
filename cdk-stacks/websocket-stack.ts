@@ -104,9 +104,11 @@ export class WebSocketStack extends cdk.Stack {
     });
 
     webSocketApi.addRoute('stats.refresh', {
-      integration: new integrations.WebSocketLambdaIntegration('ActionsIntegration', actionsHandler),
+      integration: new integrations.WebSocketLambdaIntegration(
+        'ActionsIntegration',
+        actionsHandler,
+      ),
     });
-    
 
     const kafkaConsumerLambda = Function.fromFunctionAttributes(this, 'ImportedKafkaConsumer', {
       functionArn: props.writeFnArn,

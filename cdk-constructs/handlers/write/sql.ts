@@ -118,4 +118,10 @@ export const SQL = {
       updated_ts = GREATEST(invoice_items_ops.updated_ts, newdata.updated_ts),
       is_deleted = newdata.is_deleted;
   `,
+
+  dashboard_totals_history: `
+    INSERT INTO dashboard_totals_history
+      (orders, shipments, shipment_events, invoices, invoice_items)
+    VALUES (?, ?, ?, ?, ?);
+  `,
 };

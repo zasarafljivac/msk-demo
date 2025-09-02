@@ -2,8 +2,10 @@ import mysql from 'mysql2/promise';
 import pMap from 'p-map';
 import pRetry from 'p-retry';
 
+import { SQL } from './sql';
+import type { IdempotentInsertResult } from './sql-upsert-handlers';
 import { ENTITY_HANDLERS, stopTime } from './sql-upsert-handlers';
-import { bumpRecentActivity, writeDlqSent } from './ws';
+import { bumpRecentActivity, writeDlqSent, writeSnapshot } from './ws';
 
 type ControlMode = 'GREEN' | 'YELLOW' | 'RED';
 
@@ -247,7 +249,7 @@ export async function getPool(existingPool: mysql.Pool | null): Promise<mysql.Po
   return pool;
 }
 
-async function processOne(pool: mysql.Pool, envelope: Envelope) {
+async function processOne(pool: mysql.Pool, envelope: Envelope): Promise<IdempotentInsertResult> {
   const row = envelope.data ?? {};
   const updated = isRecord(row) ? row.updated_ts : undefined;
   const effectiveTs =
@@ -256,13 +258,14 @@ async function processOne(pool: mysql.Pool, envelope: Envelope) {
   const handler = ENTITY_HANDLERS[envelope.entity];
   if (!handler) {
     log('warn', 'record.unknown', { entity: envelope.entity });
-    return;
   }
 
-  if (envelope.op === 'delete') {
-    return handler.remove(pool, row, effectiveTs);
-  }
-  return handler.upsert(pool, row, effectiveTs);
+  const result =
+    envelope.op === 'delete'
+      ? await handler.remove(pool, row, effectiveTs)
+      : await handler.upsert(pool, row, effectiveTs);
+
+  return { ...result, entity: envelope.entity };
 }
 
 export async function processChunk(
@@ -284,11 +287,40 @@ export async function processChunk(
     },
   } as const;
 
+  const totalIdempotent: {
+    orders: number;
+    shipments: number;
+    shipmentEvents: number;
+    invoices: number;
+    invoiceItems: number;
+    total: number;
+  } = { orders: 0, shipments: 0, shipmentEvents: 0, invoices: 0, invoiceItems: 0, total: 0 };
+
   await pMap(
     items,
     async (item, index) => {
       try {
-        await pRetry(() => processOne(pool, item), retryOptions);
+        const idempotentResult = await pRetry(() => processOne(pool, item), retryOptions);
+        totalIdempotent.total += idempotentResult.inserted;
+        switch (idempotentResult.entity) {
+          case 'orders_ops':
+            totalIdempotent.orders += idempotentResult.inserted;
+            break;
+          case 'shipments_ops':
+            totalIdempotent.shipments += idempotentResult.inserted;
+            break;
+          case 'shipment_events_ops':
+            totalIdempotent.shipmentEvents += idempotentResult.inserted;
+            break;
+          case 'invoices_ops':
+            totalIdempotent.invoices += idempotentResult.inserted;
+            break;
+          case 'invoice_items_ops':
+            totalIdempotent.invoiceItems += idempotentResult.inserted;
+            break;
+          default:
+            break;
+        }
         result.ok++;
       } catch (err) {
         const e = err as SqlError;
@@ -303,6 +335,18 @@ export async function processChunk(
     },
     { concurrency: CHUNK_CONCURRENCY },
   );
+  await pRetry(
+    async () =>
+      await pool.query(SQL.dashboard_totals_history, [
+        totalIdempotent.orders,
+        totalIdempotent.shipments,
+        totalIdempotent.shipmentEvents,
+        totalIdempotent.invoices,
+        totalIdempotent.invoiceItems,
+      ]),
+    retryOptions,
+  );
+  await writeSnapshot(totalIdempotent);
   await bumpRecentActivity(result);
   return result;
 }

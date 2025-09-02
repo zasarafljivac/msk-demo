@@ -107,20 +107,22 @@ export async function broadcastMessage(
 }
 
 export async function bumpRecentActivity(input: ChunkResult): Promise<void> {
+  input.rows = input.ok + input.failed + input.retried;
   ddb = ddb ?? new DynamoDBClient();
   const now = new Date().toISOString();
+
   const command = new UpdateItemCommand({
     TableName: tableName!,
     Key: { pk: { S: 'DASHBOARD' }, sk: { S: 'STATS' } },
     UpdateExpression:
       'SET lastUpdated = :now ADD ok :o, failed :f, retried :r, chunks :one, records :records',
     ExpressionAttributeValues: {
-      ':o':     { N: (input.ok ?? 0).toString() },
-      ':f':     { N: (input.failed ?? 0).toString() },
-      ':r':     { N: (input.retried ?? 0).toString() },
+      ':o': { N: (input.ok ?? 0).toString() },
+      ':f': { N: (input.failed ?? 0).toString() },
+      ':r': { N: (input.retried ?? 0).toString() },
       ':records': { N: (input.rows ?? 0).toString() },
-      ':one':   { N: '1' },
-      ':now':   { S: now },
+      ':one': { N: '1' },
+      ':now': { S: now },
     },
     ReturnValues: 'UPDATED_NEW',
   });
@@ -142,26 +144,27 @@ export async function writeSnapshot(t: {
   shipmentEvents: number;
   invoices: number;
   invoiceItems: number;
+  total: number;
 }) {
   ddb = ddb ?? new DynamoDBClient();
   const now = new Date().toISOString();
-
-  const result = await ddb.send(new UpdateItemCommand({
-    TableName: tableName,
-    Key: { pk: { S: 'DASHBOARD' }, sk: { S: 'SNAPSHOT' } },
-    UpdateExpression:
-      'SET snapshotTs = :now ADD orders :o, shipments :s, shipmentEvents :se, invoices :i, invoiceItems :ii, totalRecords :t',
-    ExpressionAttributeValues: {
-      ':o':  { N: t.orders.toString() },
-      ':s':  { N: t.shipments.toString() },
-      ':se': { N: t.shipmentEvents.toString() },
-      ':i':  { N: t.invoices.toString() },
-      ':ii': { N: t.invoiceItems.toString() },
-      ':t':  { N: (t.orders + t.shipments + t.shipmentEvents + t.invoices + t.invoiceItems).toString() },
-      ':now': { S: now },
-    },
-    ReturnValues: 'ALL_NEW',
-  }));
+  const result = await ddb.send(
+    new UpdateItemCommand({
+      TableName: tableName,
+      Key: { pk: { S: 'DASHBOARD' }, sk: { S: 'SNAPSHOT' } },
+      UpdateExpression: 'SET snapshotTs = :now ADD orders :o, shipments :s, shipmentEvents :se, invoices :i, invoiceItems :ii, totalRecords :t',
+      ExpressionAttributeValues: {
+        ':o': { N: t.orders.toString() },
+        ':s': { N: t.shipments.toString() },
+        ':se': { N: t.shipmentEvents.toString() },
+        ':i': { N: t.invoices.toString() },
+        ':ii': { N: t.invoiceItems.toString() },
+        ':t': { N: t.total.toString() },
+        ':now': { S: now },
+      },
+      ReturnValues: 'ALL_NEW',
+    }),
+  );
 
   const data = result.Attributes
     ? {
@@ -187,16 +190,18 @@ export async function writeDlqSent(entity: string, reason: string): Promise<void
   ddb = ddb ?? new DynamoDBClient();
   const now = new Date().toISOString();
   log('warn', 'write.dlq.sent', { entity, reason });
-  await ddb.send(new UpdateItemCommand({
-    TableName: tableName,
-    Key: { pk: { S: 'DASHBOARD' }, sk: { S: 'SNAPSHOT' } },
-    UpdateExpression: 'SET snapshotTs = :now ADD dlq :one',
-    ExpressionAttributeValues: {
-      ':one': { N: '1' },
-      ':now': { S: now },
-    },
-    ReturnValues: 'ALL_NEW',
-  }));
+  await ddb.send(
+    new UpdateItemCommand({
+      TableName: tableName,
+      Key: { pk: { S: 'DASHBOARD' }, sk: { S: 'SNAPSHOT' } },
+      UpdateExpression: 'SET snapshotTs = :now ADD dlq :one',
+      ExpressionAttributeValues: {
+        ':one': { N: '1' },
+        ':now': { S: now },
+      },
+      ReturnValues: 'ALL_NEW',
+    }),
+  );
 
   await broadcastMessage(
     {

@@ -2,7 +2,7 @@ import type { Pool } from 'mysql2/promise';
 import PQueue from 'p-queue';
 
 import { chunk, getPool, log, processChunk, seedModeFromSsm, setVars, toEnvelope } from './helpers';
-import { broadcastMessage, writeSnapshot } from './ws';
+import { broadcastMessage } from './ws';
 
 type EntityName =
   | 'orders_ops'
@@ -12,14 +12,6 @@ type EntityName =
   | 'invoice_items_ops';
 
 type ControlMode = 'GREEN' | 'YELLOW' | 'RED';
-
-interface Snaphot {
-  orders: number;
-  shipments: number;
-  shipmentEvents: number;
-  invoices: number;
-  invoiceItems: number;
-}
 
 interface LambdaContext {
   getRemainingTimeInMillis?: () => number;
@@ -83,32 +75,6 @@ const safeJsonParse = (s: string): unknown => {
   } catch {
     return null;
   }
-};
-
-const getChunkStats = (chunks: Envelope[][]): Snaphot => {
-  const snap: Snaphot = {
-    orders: 0,
-    shipments: 0,
-    shipmentEvents: 0,
-    invoices: 0,
-    invoiceItems: 0,
-  };
-  for (const ch of chunks) {
-    for (const env of ch) {
-      if (env.entity === 'orders_ops') {
-        snap.orders++;
-      } else if (env.entity === 'shipments_ops') {
-        snap.shipments++;
-      } else if (env.entity === 'shipment_events_ops') {
-        snap.shipmentEvents++;
-      } else if (env.entity === 'invoices_ops') {
-        snap.invoices++;
-      } else if (env.entity === 'invoice_items_ops') {
-        snap.invoiceItems++;
-      }
-    }
-  }
-  return snap;
 };
 
 export const handler = async (event: KafkaEvent, context: LambdaContext) => {
@@ -261,13 +227,13 @@ export const handler = async (event: KafkaEvent, context: LambdaContext) => {
 
   const msLeft = Math.max(0, deadline - Date.now());
   try {
-    const raceResults = await Promise.race([
+    await Promise.race([
       chunksQueue.onIdle(),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('TIME_BUDGET_EARLY_EXIT')), msLeft),
       ),
     ]);
-    log('info', 'chunks.processed', { scheduledChunks, raceResults });
+    log('info', 'chunks.processed', { scheduledChunks });
   } catch (err) {
     const e = err as { message?: string } | undefined;
     log('warn', 'early.exit.failfast', {
@@ -281,8 +247,6 @@ export const handler = async (event: KafkaEvent, context: LambdaContext) => {
     scheduledChunks,
     tookMs: remainingTime - (context.getRemainingTimeInMillis?.() ?? 0),
   });
-
-  await writeSnapshot(getChunkStats(chunks));
 
   return { statusCode: 200 };
 };

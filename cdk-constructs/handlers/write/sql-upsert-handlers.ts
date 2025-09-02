@@ -4,6 +4,12 @@ import { parse as uuidParse } from 'uuid';
 import { log } from './helpers';
 import { SQL } from './sql';
 
+export interface IdempotentInsertResult {
+  response: mysql.ResultSetHeader;
+  inserted: number;
+  entity: string;
+}
+
 type UuidInput = Buffer | Uint8Array | string;
 
 export const asBin16 = (input: unknown): Buffer => {
@@ -79,7 +85,11 @@ interface InvoiceItemsRow {
   is_deleted?: boolean;
 }
 
-type UpsertHandler = (pool: mysql.Pool, row: unknown, effectiveTs: string) => Promise<unknown>;
+type UpsertHandler = (
+  pool: mysql.Pool,
+  row: unknown,
+  effectiveTs: string,
+) => Promise<IdempotentInsertResult>;
 type DeleteHandler = UpsertHandler;
 
 export const stopTime = () => {
@@ -87,16 +97,53 @@ export const stopTime = () => {
   return () => Date.now() - s;
 };
 
-async function exec(pool: mysql.Pool, label: string, sql: string, params: unknown[]) {
+function getInfoString(x: unknown): string {
+  if (x && typeof x === 'object' && 'info' in x) {
+    const v = (x as Record<string, unknown>).info;
+    if (typeof v === 'string') {
+      return v;
+    }
+  }
+  return '';
+}
+
+export function insertedFromUpsert(rows: mysql.ResultSetHeader): number {
+  const info = getInfoString(rows);
+  // Multi-row upsert: "Records: X  Duplicates: Y  Warnings: Z"
+  const m = /Records:\s+(\d+)\s+Duplicates:\s+(\d+)/.exec(info);
+  if (m) {
+    const records = Number(m[1]);
+    const duplicates = Number(m[2]);
+    return Math.max(0, records - duplicates);
+  }
+  switch (rows.affectedRows) {
+    case 0:
+      return 0;
+    case 1:
+      return 1;
+    case 2:
+      return 0;
+    default:
+      return 0;
+  }
+}
+
+async function exec(
+  pool: mysql.Pool,
+  label: string,
+  sql: string,
+  params: unknown[],
+): Promise<IdempotentInsertResult> {
   const stop = stopTime();
-  const [res] = await pool.query(sql, params);
+  const [response] = await pool.query<mysql.ResultSetHeader>(sql, params);
+  const inserted = insertedFromUpsert(response);
   const ms = stop();
   if (ms > 1000) {
     log('warn', 'sql.exec.slow', { label, ms });
   } else {
     log('debug', 'sql.exec.ok', { label, ms });
   }
-  return res;
+  return { response, inserted, entity: label.split('.')[0] };
 }
 
 async function softDelete(
@@ -107,8 +154,8 @@ async function softDelete(
   updated_ts: string,
 ) {
   const sql = `UPDATE ${table}
-               SET is_deleted=1, updated_ts=GREATEST(updated_ts, ?)
-               WHERE ${whereClause}`;
+    SET is_deleted=1, updated_ts=GREATEST(updated_ts, ?)
+    WHERE ${whereClause}`;
   return exec(pool, `${table}.softDelete`, sql, [updated_ts, ...params]);
 }
 

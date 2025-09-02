@@ -71,3 +71,17 @@ CREATE TABLE IF NOT EXISTS invoice_items_ops (
   PRIMARY KEY (invoice_id, line_no),
   KEY idx_invoice_items_sku (sku)
 ) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS dashboard_totals_history (
+  snapshot_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  orders BIGINT UNSIGNED NOT NULL,
+  shipments BIGINT UNSIGNED NOT NULL,
+  shipment_events BIGINT UNSIGNED NOT NULL,
+  invoices BIGINT UNSIGNED NOT NULL,
+  invoice_items BIGINT UNSIGNED NOT NULL,
+  total BIGINT UNSIGNED AS (
+    orders + shipments + shipment_events + invoices + invoice_items
+  ) STORED,
+  captured_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  KEY ix_captured_at (captured_at)
+) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4;
