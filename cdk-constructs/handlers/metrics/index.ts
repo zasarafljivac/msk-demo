@@ -67,7 +67,6 @@ function toSeries(res?: { Timestamps?: Date[]; Values?: number[] }) {
   return out;
 }
 
-
 export async function getMetricData(
   queries: MetricDataQuery[],
   start: Date,
@@ -95,7 +94,6 @@ async function throughput(qs: Record<string, string | undefined>) {
   const bufferTopic = qs.bufferTopic ?? process.env.BUFFER_TOPIC!;
   const { start, end } = parseRange(qs.range);
 
-  // Build per-topic queries (preferred)
   const qRawTopic  = kafkaSearchExpr({ cluster, topic: rawTopic });
   const qBufTopic  = kafkaSearchExpr({ cluster, topic: bufferTopic });
 
@@ -236,93 +234,6 @@ async function lambdaQuality(qs: Record<string, string | undefined>) {
   };
 }
 
-async function wsMetrics(qs: Record<string, string | undefined>) {
-  const apiId = qs.apiId ?? process.env.WS_API_ID!;
-  const stage = qs.stage ?? process.env.WS_STAGE!;
-  const { start, end } = parseRange(qs.range);
-  const queries: MetricDataQuery[] = [
-    {
-      Id: 'messageCount',
-      MetricStat: {
-        Metric: {
-          Namespace: 'AWS/ApiGateway',
-          MetricName: 'MessageCount',
-          Dimensions: [
-            { Name: 'ApiId', Value: apiId },
-            { Name: 'Stage', Value: stage },
-          ],
-        },
-        Period: 60,
-        Stat: 'Sum',
-      },
-    },
-    {
-      Id: 'integrationError',
-      MetricStat: {
-        Metric: {
-          Namespace: 'AWS/ApiGateway',
-          MetricName: 'IntegrationError',
-          Dimensions: [
-            { Name: 'ApiId', Value: apiId },
-            { Name: 'Stage', Value: stage },
-          ],
-        },
-        Period: 60,
-        Stat: 'Sum',
-      },
-    },
-  ];
-  const res = await getMetricData(queries, start, end);
-  return {
-    statusCode: 200,
-    headers: CORS,
-    body: JSON.stringify({
-      messageCount: toSeries(res.get('messageCount') ?? {}),
-      integrationError: toSeries(res.get('integrationError') ?? {}),
-    }),
-  };
-}
-
-async function scheduler(qs: Record<string, string | undefined>) {
-  const group = qs.group ?? process.env.SCHED_GROUP ?? 'default';
-  const { start, end } = parseRange(qs.range);
-  const queries: MetricDataQuery[] = [
-    {
-      Id: 'attempts',
-      MetricStat: {
-        Metric: {
-          Namespace: 'AWS/Scheduler',
-          MetricName: 'InvocationAttemptCount',
-          Dimensions: [{ Name: 'ScheduleGroup', Value: group }],
-        },
-        Period: 60,
-        Stat: 'Sum',
-      },
-    },
-    {
-      Id: 'errors',
-      MetricStat: {
-        Metric: {
-          Namespace: 'AWS/Scheduler',
-          MetricName: 'TargetErrorCount',
-          Dimensions: [{ Name: 'ScheduleGroup', Value: group }],
-        },
-        Period: 60,
-        Stat: 'Sum',
-      },
-    },
-  ];
-  const res = await getMetricData(queries, start, end);
-  return {
-    statusCode: 200,
-    headers: CORS,
-    body: JSON.stringify({
-      attempts: toSeries(res.get('attempts') ?? {}),
-      errors: toSeries(res.get('errors') ?? {}),
-    }),
-  };
-}
-
 export async function handler(event: APIGEvent): Promise<APIGResp> {
   try {
     const path = event.rawPath || '';
@@ -335,12 +246,6 @@ export async function handler(event: APIGEvent): Promise<APIGResp> {
     }
     if (path.endsWith('/lambda-quality')) {
       return lambdaQuality(qs);
-    }
-    if (path.endsWith('/ws')) {
-      return wsMetrics(qs);
-    }
-    if (path.endsWith('/scheduler')) {
-      return scheduler(qs);
     }
     return { statusCode: 404, headers: CORS, body: JSON.stringify({ error: 'not found' }) };
   } catch (e: unknown) {
