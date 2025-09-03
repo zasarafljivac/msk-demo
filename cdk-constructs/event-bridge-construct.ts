@@ -48,7 +48,7 @@ export class EventBridgeConstruct extends Construct {
               Source: 'burst.scheduler',
               DetailType: '30-minute-burst',
               EventBusName: bus.eventBusName,
-              Detail: JSON.stringify({ rate: 100, seconds: 60 }),
+              Detail: JSON.stringify({ rate: 400, seconds: 60 }),
             },
           ],
         }),
