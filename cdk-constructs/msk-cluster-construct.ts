@@ -19,6 +19,7 @@ export class MskClusterConstruct extends Construct {
       clusterName: `${Stack.of(this).stackName}-demo`,
       kafkaVersion: '3.8.x',
       numberOfBrokerNodes: 3,
+      enhancedMonitoring: 'PER_TOPIC_PER_BROKER',
       brokerNodeGroupInfo: {
         clientSubnets: props.vpc.privateSubnets.map((s) => s.subnetId),
         securityGroups: [props.mskSg.securityGroupId],
