@@ -152,7 +152,8 @@ export async function writeSnapshot(t: {
     new UpdateItemCommand({
       TableName: tableName,
       Key: { pk: { S: 'DASHBOARD' }, sk: { S: 'SNAPSHOT' } },
-      UpdateExpression: 'SET snapshotTs = :now ADD orders :o, shipments :s, shipmentEvents :se, invoices :i, invoiceItems :ii, totalRecords :t',
+      UpdateExpression:
+        'SET snapshotTs = :now ADD orders :o, shipments :s, shipmentEvents :se, invoices :i, invoiceItems :ii, totalRecords :t',
       ExpressionAttributeValues: {
         ':o': { N: t.orders.toString() },
         ':s': { N: t.shipments.toString() },

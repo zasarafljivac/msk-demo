@@ -31,6 +31,9 @@ export class EventSourcesConstruct extends Construct {
       batchSize: 100,
       maximumBatchingWindowInSeconds: 1,
       startingPosition: 'LATEST',
+      amazonManagedKafkaEventSourceConfig: {
+        consumerGroupId: 'write-buffer-consumer-group',
+      },
     });
 
     new CfnEventSourceMapping(this, 'EsmDbHealth', {
