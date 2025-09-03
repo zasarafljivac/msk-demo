@@ -5,7 +5,7 @@ import type { APIGatewayProxyEvent } from 'aws-lambda';
 import { log } from '../write/helpers';
 
 const ddb = new DynamoDBClient();
-const tableName = process.env.TABLE_NAME!;
+const tableName = process.env.TABLE!;
 
 function apigwClientFromEvent(domainName: string, stage: string) {
   return new ApiGatewayManagementApi({ endpoint: `https://${domainName}/${stage}` });
