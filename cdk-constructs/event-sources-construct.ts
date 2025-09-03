@@ -22,6 +22,9 @@ export class EventSourcesConstruct extends Construct {
       batchSize: 100,
       maximumBatchingWindowInSeconds: 1,
       startingPosition: 'LATEST',
+      amazonManagedKafkaEventSourceConfig: {
+        consumerGroupId: 'transform-source-consumer-group',
+      },
     });
 
     const esm2 = new CfnEventSourceMapping(this, 'EsmBuffer', {

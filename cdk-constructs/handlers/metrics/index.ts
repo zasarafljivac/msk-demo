@@ -27,6 +27,28 @@ function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+function pickStageDefaults(qs: Record<string, string | undefined>) {
+  const stage = (qs.stage ?? qs.target ?? 'write').toLowerCase();
+  const isTransform = stage === 'transform' || stage === 'xform';
+
+  const fn =
+    qs.function ??
+    (isTransform ? process.env.TRANSFORM_FN : process.env.CONSUMER_FN) ??
+    '';
+
+  const consumerGroup =
+    qs.consumerGroup ??
+    (isTransform ? process.env.TRANSFORM_CONSUMER_GROUP : process.env.CONSUMER_GROUP) ??
+    '';
+
+  const topic =
+    qs.topic ??
+    (isTransform ? process.env.RAW_TOPIC : process.env.BUFFER_TOPIC) ??
+    '';
+
+  return { stage, isTransform, fn, consumerGroup, topic };
+}
+
 function kafkaSearchExpr(opts: { cluster: string; topic?: string; period?: number }) {
   const { cluster, topic, period = 60 } = opts;
 
@@ -119,7 +141,6 @@ async function throughput(qs: Record<string, string | undefined>) {
     }
 
     const qRaw = kafkaSearchExpr({ cluster });
-    // const qBuf = kafkaSearchExpr({ cluster });
     queries = [
       { Id: qRaw.searchId, Expression: qRaw.expr },
 
@@ -140,45 +161,81 @@ async function throughput(qs: Record<string, string | undefined>) {
 
 async function lag(qs: Record<string, string | undefined>) {
   const cluster = qs.cluster ?? process.env.CLUSTER!;
-  const topic = qs.topic ?? process.env.RAW_TOPIC!;
-  const group = qs.consumerGroup ?? process.env.CONSUMER_GROUP!;
+  const { fn, consumerGroup, topic } = pickStageDefaults(qs);
   const { start, end } = parseRange(qs.range);
 
   const queries: MetricDataQuery[] = [
     {
-      Id: 'mbroker',
-      Expression:
-        `SEARCH('{AWS/Kafka,Cluster Name,Consumer Group,Topic,Partition} MetricName="SumOffsetLag" ` +
-        `AND Cluster\\ Name="${cluster}" AND Consumer\\ Group="${group}" AND Topic="${topic}"', 'Sum', 60)`,
+      Id: 'broker',
+      MetricStat: {
+        Metric: {
+          Namespace: 'AWS/Kafka',
+          MetricName: 'SumOffsetLag',
+          Dimensions: [
+            { Name: 'Cluster Name',   Value: cluster },
+            { Name: 'Consumer Group', Value: consumerGroup },
+            { Name: 'Topic',          Value: topic },
+          ],
+        },
+        Period: 60,
+        Stat: 'Maximum',
+      },
     },
-    { Id: 'broker', Expression: 'SUM(METRICS())' },
     {
       Id: 'lambda',
       MetricStat: {
         Metric: {
           Namespace: 'AWS/Lambda',
           MetricName: 'OffsetLag',
-          Dimensions: [{ Name: 'FunctionName', Value: process.env.CONSUMER_FN ?? '' }],
+          Dimensions: [{ Name: 'FunctionName', Value: fn }],
         },
         Period: 60,
         Stat: 'Maximum',
       },
     },
   ];
+
   const res = await getMetricData(queries, start, end);
+  let broker = toSeries(res.get('broker') ?? {});
+  if (broker.length === 0) {
+    const alt: MetricDataQuery[] = [
+      {
+        Id: 'broker',
+        MetricStat: {
+          Metric: {
+            Namespace: 'AWS/Kafka',
+            MetricName: 'SumOffsetLag',
+            Dimensions: [
+              { Name: 'Cluster Name',   Value: cluster },
+              { Name: 'Consumer Group', Value: consumerGroup },
+              // Topic omitted
+            ],
+          },
+          Period: 60,
+          Stat: 'Maximum',
+        },
+      },
+    ];
+    const altRes = await getMetricData(alt, start, end);
+    broker = toSeries(altRes.get('broker') ?? {});
+  }
+
   return {
     statusCode: 200,
     headers: CORS,
     body: JSON.stringify({
-      broker: toSeries(res.get('broker') ?? {}),
+      broker,
       lambda: toSeries(res.get('lambda') ?? {}),
+      used: { topic, consumerGroup, functionName: fn },
     }),
   };
 }
 
+
 async function lambdaQuality(qs: Record<string, string | undefined>) {
-  const fn = qs.function ?? process.env.CONSUMER_FN!;
+  const { fn } = pickStageDefaults(qs);
   const { start, end } = parseRange(qs.range);
+
   const queries: MetricDataQuery[] = [
     {
       Id: 'invocations',
@@ -217,6 +274,7 @@ async function lambdaQuality(qs: Record<string, string | undefined>) {
       },
     },
   ];
+
   const res = await getMetricData(queries, start, end);
   return {
     statusCode: 200,
@@ -229,6 +287,7 @@ async function lambdaQuality(qs: Record<string, string | undefined>) {
     }),
   };
 }
+
 
 export async function handler(event: APIGEvent): Promise<APIGResp> {
   try {

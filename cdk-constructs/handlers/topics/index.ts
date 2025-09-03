@@ -5,6 +5,8 @@ import { Kafka as KafkaJS } from 'kafkajs';
 import { log } from '../write/helpers';
 import { compactTopic, waitForMskActive } from './helpers';
 
+const ONE_DAY_MS = 86400_000;
+
 const region = process.env.AWS_REGION!;
 const clusterArn = process.env.CLUSTER_ARN!;
 const topics = JSON.parse(process.env.TOPICS ?? '[]') as string[];
@@ -45,6 +47,10 @@ export const handler = async () => {
           topic: t,
           numPartitions: 5,
           replicationFactor: 3,
+          configEntries: [
+            { name: 'cleanup.policy', value: 'delete' },
+            { name: 'retention.ms', value: String(ONE_DAY_MS) },
+          ],
         })),
         waitForLeaders: true,
       });
