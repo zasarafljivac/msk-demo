@@ -31,20 +31,17 @@ function kafkaSearchExpr(opts: { cluster: string; topic?: string; period?: numbe
   const { cluster, topic, period = 60 } = opts;
 
   const dims = topic
-    ? "{AWS/Kafka,Cluster Name,Broker ID,Topic}"
-    : "{AWS/Kafka,Cluster Name,Broker ID}";
+    ? '{AWS/Kafka,Cluster Name,Broker ID,Topic}'
+    : '{AWS/Kafka,Cluster Name,Broker ID}';
 
-  const filters = [
-    'MetricName="MessagesInPerSec"',
-    `Cluster\\ Name="${cluster}"`,
-  ];
+  const filters = ['MetricName="MessagesInPerSec"', `Cluster\\ Name="${cluster}"`];
   if (topic) {
     filters.push(`Topic="${topic}"`);
   }
 
   return {
-    searchId: topic ? "mtopic" : "mbroker",
-    expr: `SEARCH('${dims} ${filters.join(" AND ")}', 'Sum', ${period})`,
+    searchId: topic ? 'mtopic' : 'mbroker',
+    expr: `SEARCH('${dims} ${filters.join(' AND ')}', 'Sum', ${period})`,
   };
 }
 
@@ -94,14 +91,14 @@ async function throughput(qs: Record<string, string | undefined>) {
   const bufferTopic = qs.bufferTopic ?? process.env.BUFFER_TOPIC!;
   const { start, end } = parseRange(qs.range);
 
-  const qRawTopic  = kafkaSearchExpr({ cluster, topic: rawTopic });
-  const qBufTopic  = kafkaSearchExpr({ cluster, topic: bufferTopic });
+  const qRawTopic = kafkaSearchExpr({ cluster, topic: rawTopic });
+  const qBufTopic = kafkaSearchExpr({ cluster, topic: bufferTopic });
 
   let queries: MetricDataQuery[] = [
     { Id: qRawTopic.searchId, Expression: qRawTopic.expr },
-    { Id: "raw",  Expression: "SUM(METRICS())" },
+    { Id: 'raw', Expression: 'SUM(METRICS())' },
     { Id: qBufTopic.searchId, Expression: qBufTopic.expr },
-    { Id: "buffer", Expression: "SUM(METRICS())" },
+    { Id: 'buffer', Expression: 'SUM(METRICS())' },
   ];
 
   try {
@@ -110,13 +107,13 @@ async function throughput(qs: Record<string, string | undefined>) {
       statusCode: 200,
       headers: CORS,
       body: JSON.stringify({
-        raw: toSeries(map.get("raw")),
-        buffer: toSeries(map.get("buffer")),
+        raw: toSeries(map.get('raw')),
+        buffer: toSeries(map.get('buffer')),
       }),
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    const isInvalidSearch = msg.includes("Invalid SEARCH parameter");
+    const isInvalidSearch = msg.includes('Invalid SEARCH parameter');
     if (!isInvalidSearch) {
       return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: msg }) };
     }
@@ -125,22 +122,21 @@ async function throughput(qs: Record<string, string | undefined>) {
     // const qBuf = kafkaSearchExpr({ cluster });
     queries = [
       { Id: qRaw.searchId, Expression: qRaw.expr },
-      
-      { Id: "all", Expression: "SUM(METRICS())" },
+
+      { Id: 'all', Expression: 'SUM(METRICS())' },
     ];
     const map = await getMetricData(queries, start, end);
     return {
       statusCode: 200,
       headers: CORS,
       body: JSON.stringify({
-        raw: toSeries(map.get("all")),
-        buffer: toSeries(map.get("all")),
-        note: "Per-topic metrics not enabled; showing cluster-wide MessagesInPerSec.",
+        raw: toSeries(map.get('all')),
+        buffer: toSeries(map.get('all')),
+        note: 'Per-topic metrics not enabled; showing cluster-wide MessagesInPerSec.',
       }),
     };
   }
 }
-
 
 async function lag(qs: Record<string, string | undefined>) {
   const cluster = qs.cluster ?? process.env.CLUSTER!;

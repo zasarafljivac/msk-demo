@@ -2,7 +2,7 @@ import type { Pool } from 'mysql2/promise';
 import PQueue from 'p-queue';
 
 import { chunk, getPool, log, processChunk, seedModeFromSsm, setVars, toEnvelope } from './helpers';
-import { broadcastMessage } from './ws';
+import { enqueueWs, flushPending, loadConfig } from './ws';
 
 type EntityName =
   | 'orders_ops'
@@ -78,6 +78,8 @@ const safeJsonParse = (s: string): unknown => {
 };
 
 export const handler = async (event: KafkaEvent, context: LambdaContext) => {
+
+  await loadConfig(CONNECTIONS_TABLE, WS_ENDPOINT);
   currentMode = currentMode ?? (await seedModeFromSsm());
 
   const remainingTime =
@@ -92,7 +94,7 @@ export const handler = async (event: KafkaEvent, context: LambdaContext) => {
     budgetMs,
     groups: Object.keys(event.records ?? {}).length,
   });
-  await broadcastMessage(
+  enqueueWs(
     {
       type: 'invoke.start',
       ts: new Date().toISOString(),
@@ -159,7 +161,7 @@ export const handler = async (event: KafkaEvent, context: LambdaContext) => {
       ts: new Date().toISOString(),
     });
 
-    await broadcastMessage(
+    enqueueWs(
       {
         type: 'control.update',
         ts: new Date().toISOString(),
@@ -172,7 +174,7 @@ export const handler = async (event: KafkaEvent, context: LambdaContext) => {
 
   if (!currentMode) {
     log('warn', 'control.not.ready', { skipped: envelopes.length });
-    await broadcastMessage(
+    enqueueWs(
       {
         type: 'control.not.ready',
         ts: new Date().toISOString(),
@@ -194,7 +196,7 @@ export const handler = async (event: KafkaEvent, context: LambdaContext) => {
     groups: CHUNK_PARALLELISM,
     perChunk: CHUNK_CONCURRENCY,
   });
-  await broadcastMessage(
+  enqueueWs(
     {
       type: 'invoke.plan',
       ts: new Date().toISOString(),
@@ -248,5 +250,6 @@ export const handler = async (event: KafkaEvent, context: LambdaContext) => {
     tookMs: remainingTime - (context.getRemainingTimeInMillis?.() ?? 0),
   });
 
+  await flushPending(CONNECTIONS_TABLE, WS_ENDPOINT);
   return { statusCode: 200 };
 };
