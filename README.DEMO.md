@@ -14,7 +14,7 @@ We will start by explaining separation of concerns, why it is important, and fol
 
 Before I made this calculation, I load tested my infrastructure and measured latency. My batch, or rather chunk, of 30 messages was processed in between 0.15 and 0.20 seconds. I am adding a 30% safety buffer in case of increased latency or unexpected lag.
 
-P = max( 1 , ceil( (T _ t _ f) / B ) )
+P = max( 1 , ceil( (T * t * f) / B ) )
 
 Where:
 
@@ -33,8 +33,8 @@ f = 1.3
 B = 30
 
 Compute:
-500 _ 0.2 = 100
-100 _ 1.3 = 130
+500 * 0.2 = 100
+100 * 1.3 = 130
 130 / 30 = 4.33
 ceil(4.33) = 5
 
@@ -42,14 +42,14 @@ Result: **P = 5 partitions**
 
 With 5 concurrent writers (1 per partition), the maximum client connections are:
 
-ClientConnections = P _ ConnectionLimit
-ClientConnections = 5 _ 2 = 10
+ClientConnections = P * ConnectionLimit
+ClientConnections = 5 * 2 = 10
 (where connectionLimit on the pool is set to 2).
 
 We split a batch of 30 rows into 2 queries of 15 rows each. The database connections remain around:
 
-DBConnections = P _ CHUNK_CONCURRENCY
-DBConnections = 5 _ 2 = 10
+DBConnections = P * CHUNK_CONCURRENCY
+DBConnections = 5 * 2 = 10
 
 This allows the RDS Proxy to reuse database connections effectively.
 We can even reduce the number of connections further to demonstrate the point.
