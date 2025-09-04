@@ -173,6 +173,7 @@ export class LambdaConstruct extends Construct {
       logGroup: mkLog('TransformFunction'),
       environment: {
         BUFFER_TOPIC: props.BUFFER_TOPIC,
+        SOURCE_TOPIC: props.SOURCE_TOPIC,
         BOOTSTRAP_BROKERS_SASL_IAM: props.bootstrapBrokersSaslIam ?? '',
       },
     });
@@ -255,6 +256,7 @@ export class LambdaConstruct extends Construct {
         DEFAULT_MODE: 'GREEN',
         CONNECTIONS_TABLE: props.CONNECTIONS_TABLE,
         WS_ENDPOINT: props.WS_ENDPOINT,
+        BUFFER_TOPIC: props.BUFFER_TOPIC,
       },
       layers: [layer],
     });

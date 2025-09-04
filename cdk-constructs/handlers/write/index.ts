@@ -1,3 +1,4 @@
+import { metricScope, Unit } from 'aws-embedded-metrics';
 import type { Pool } from 'mysql2/promise';
 import PQueue from 'p-queue';
 
@@ -77,179 +78,188 @@ const safeJsonParse = (s: string): unknown => {
   }
 };
 
-export const handler = async (event: KafkaEvent, context: LambdaContext) => {
+export const handler = metricScope(
+  (metrics) => async (event: KafkaEvent, context: LambdaContext) => {
+    await loadConfig(CONNECTIONS_TABLE, WS_ENDPOINT);
+    currentMode = currentMode ?? (await seedModeFromSsm());
 
-  await loadConfig(CONNECTIONS_TABLE, WS_ENDPOINT);
-  currentMode = currentMode ?? (await seedModeFromSsm());
+    const remainingTime =
+      typeof context.getRemainingTimeInMillis === 'function'
+        ? context.getRemainingTimeInMillis()
+        : 30000;
 
-  const remainingTime =
-    typeof context.getRemainingTimeInMillis === 'function'
-      ? context.getRemainingTimeInMillis()
-      : 30000;
+    const budgetMs = Math.max(0, remainingTime - SAFETY_MS);
+    const deadline = Date.now() + budgetMs;
 
-  const budgetMs = Math.max(0, remainingTime - SAFETY_MS);
-  const deadline = Date.now() + budgetMs;
-
-  log('info', 'invoke.start', {
-    budgetMs,
-    groups: Object.keys(event.records ?? {}).length,
-  });
-  enqueueWs(
-    {
-      type: 'invoke.start',
-      ts: new Date().toISOString(),
-      data: { budgetMs, groups: Object.keys(event.records ?? {}).length },
-    },
-    CONNECTIONS_TABLE,
-    WS_ENDPOINT,
-  );
-
-  pool = await getPool(pool);
-
-  const allRecords = Object.values(event.records ?? {}).flat() ?? [];
-  const envelopes: Envelope[] = allRecords
-    .map((rec) => Buffer.from(rec.value, 'base64').toString('utf8'))
-    .map(safeJsonParse)
-    .map((o) => toEnvelope(o as Record<string, unknown>))
-    .filter(Boolean) as Envelope[];
-
-  for (const env of envelopes) {
-    const hasControl = env.kind === 'CONTROL' || !!env.control;
-    if (!hasControl || !env.control) {
-      continue;
-    }
-
-    currentMode = env.control.mode;
-
-    switch (currentMode) {
-      case 'RED':
-        CHUNK_PARALLELISM = 1;
-        CHUNK_CONCURRENCY = 1;
-        CHUNK_SIZE = 10;
-        break;
-      case 'YELLOW':
-        CHUNK_PARALLELISM = 2;
-        CHUNK_CONCURRENCY = 3;
-        CHUNK_SIZE = 20;
-        break;
-      case 'GREEN':
-      default:
-        CHUNK_PARALLELISM = 4;
-        CHUNK_CONCURRENCY = 8;
-        CHUNK_SIZE = 30;
-        break;
-    }
-
-    setVars({
-      LOG_LEVEL,
-      CHUNK_PARALLELISM,
-      CHUNK_SIZE,
-      CHUNK_CONCURRENCY,
-      RDS_PROXY_ENDPOINT,
-      TOKEN,
-      PARAM_NAME,
-      DEFAULT_MODE,
+    log('info', 'invoke.start', {
+      budgetMs,
+      groups: Object.keys(event.records ?? {}).length,
     });
-
-    log('info', 'db.health.apply', {
-      mode: currentMode,
-      newSettings: {
-        parallelism: CHUNK_PARALLELISM,
-        concurrency: CHUNK_CONCURRENCY,
-        chunkSize: CHUNK_SIZE,
-      },
-      ts: new Date().toISOString(),
-    });
-
     enqueueWs(
       {
-        type: 'control.update',
+        type: 'invoke.start',
         ts: new Date().toISOString(),
-        data: { mode: currentMode },
+        data: { budgetMs, groups: Object.keys(event.records ?? {}).length },
       },
       CONNECTIONS_TABLE,
       WS_ENDPOINT,
     );
-  }
 
-  if (!currentMode) {
-    log('warn', 'control.not.ready', { skipped: envelopes.length });
-    enqueueWs(
-      {
-        type: 'control.not.ready',
-        ts: new Date().toISOString(),
-        data: { skipped: envelopes.length },
-      },
-      CONNECTIONS_TABLE,
-      WS_ENDPOINT,
-    );
-    return { statusCode: 200 };
-  }
+    pool = await getPool(pool);
 
-  const dataEnvelopes = envelopes.filter((e) => !e.control);
-  const chunks = chunk(dataEnvelopes, CHUNK_SIZE);
+    const allRecords = Object.values(event.records ?? {}).flat() ?? [];
+    metrics.setNamespace('MSKDemo');
+    metrics.setDimensions({
+      Stage: 'buffer',
+      Topic: process.env.BUFFER_TOPIC ?? 'msk-demo-buffer',
+    });
+    const count = Object.values(event.records ?? {}).reduce((n, arr) => n + (arr?.length ?? 0), 0);
+    metrics.putMetric('TPS', count, Unit.Count);
 
-  log('info', 'invoke.plan', {
-    total: dataEnvelopes.length,
-    chunkSize: CHUNK_SIZE,
-    chunks: chunks.length,
-    groups: CHUNK_PARALLELISM,
-    perChunk: CHUNK_CONCURRENCY,
-  });
-  enqueueWs(
-    {
-      type: 'invoke.plan',
-      ts: new Date().toISOString(),
-      data: {
-        total: dataEnvelopes.length,
-        chunkSize: CHUNK_SIZE,
-        chunks: chunks.length,
-        groups: CHUNK_PARALLELISM,
-        perChunk: CHUNK_CONCURRENCY,
-      },
-    },
-    CONNECTIONS_TABLE,
-    WS_ENDPOINT,
-  );
+    const envelopes: Envelope[] = allRecords
+      .map((rec) => Buffer.from(rec.value, 'base64').toString('utf8'))
+      .map(safeJsonParse)
+      .map((o) => toEnvelope(o as Record<string, unknown>))
+      .filter(Boolean) as Envelope[];
 
-  const chunksQueue = new PQueue({ concurrency: CHUNK_PARALLELISM });
+    for (const env of envelopes) {
+      const hasControl = env.kind === 'CONTROL' || !!env.control;
+      if (!hasControl || !env.control) {
+        continue;
+      }
 
-  let scheduledChunks = 0;
-  for (const ch of chunks) {
-    if (Date.now() >= deadline) {
-      log('warn', 'budget.exhausted', {
-        scheduledChunks,
-        remainingMs: context.getRemainingTimeInMillis?.(),
+      currentMode = env.control.mode;
+
+      switch (currentMode) {
+        case 'RED':
+          CHUNK_PARALLELISM = 1;
+          CHUNK_CONCURRENCY = 1;
+          CHUNK_SIZE = 10;
+          break;
+        case 'YELLOW':
+          CHUNK_PARALLELISM = 2;
+          CHUNK_CONCURRENCY = 3;
+          CHUNK_SIZE = 20;
+          break;
+        case 'GREEN':
+        default:
+          CHUNK_PARALLELISM = 4;
+          CHUNK_CONCURRENCY = 8;
+          CHUNK_SIZE = 30;
+          break;
+      }
+
+      setVars({
+        LOG_LEVEL,
+        CHUNK_PARALLELISM,
+        CHUNK_SIZE,
+        CHUNK_CONCURRENCY,
+        RDS_PROXY_ENDPOINT,
+        TOKEN,
+        PARAM_NAME,
+        DEFAULT_MODE,
       });
-      break;
+
+      log('info', 'db.health.apply', {
+        mode: currentMode,
+        newSettings: {
+          parallelism: CHUNK_PARALLELISM,
+          concurrency: CHUNK_CONCURRENCY,
+          chunkSize: CHUNK_SIZE,
+        },
+        ts: new Date().toISOString(),
+      });
+
+      enqueueWs(
+        {
+          type: 'control.update',
+          ts: new Date().toISOString(),
+          data: { mode: currentMode },
+        },
+        CONNECTIONS_TABLE,
+        WS_ENDPOINT,
+      );
     }
-    scheduledChunks++;
-    void chunksQueue.add(() => processChunk(pool!, ch));
-  }
 
-  const msLeft = Math.max(0, deadline - Date.now());
-  try {
-    await Promise.race([
-      chunksQueue.onIdle(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('TIME_BUDGET_EARLY_EXIT')), msLeft),
-      ),
-    ]);
-    log('info', 'chunks.processed', { scheduledChunks });
-  } catch (err) {
-    const e = err as { message?: string } | undefined;
-    log('warn', 'early.exit.failfast', {
-      scheduledChunks,
-      err: e?.message ?? 'unknown',
+    if (!currentMode) {
+      log('warn', 'control.not.ready', { skipped: envelopes.length });
+      enqueueWs(
+        {
+          type: 'control.not.ready',
+          ts: new Date().toISOString(),
+          data: { skipped: envelopes.length },
+        },
+        CONNECTIONS_TABLE,
+        WS_ENDPOINT,
+      );
+      return { statusCode: 200 };
+    }
+
+    const dataEnvelopes = envelopes.filter((e) => !e.control);
+    const chunks = chunk(dataEnvelopes, CHUNK_SIZE);
+
+    log('info', 'invoke.plan', {
+      total: dataEnvelopes.length,
+      chunkSize: CHUNK_SIZE,
+      chunks: chunks.length,
+      groups: CHUNK_PARALLELISM,
+      perChunk: CHUNK_CONCURRENCY,
     });
-    throw err;
-  }
+    enqueueWs(
+      {
+        type: 'invoke.plan',
+        ts: new Date().toISOString(),
+        data: {
+          total: dataEnvelopes.length,
+          chunkSize: CHUNK_SIZE,
+          chunks: chunks.length,
+          groups: CHUNK_PARALLELISM,
+          perChunk: CHUNK_CONCURRENCY,
+        },
+      },
+      CONNECTIONS_TABLE,
+      WS_ENDPOINT,
+    );
 
-  log('info', 'invoke.done', {
-    scheduledChunks,
-    tookMs: remainingTime - (context.getRemainingTimeInMillis?.() ?? 0),
-  });
+    const chunksQueue = new PQueue({ concurrency: CHUNK_PARALLELISM });
 
-  await flushPending(CONNECTIONS_TABLE, WS_ENDPOINT);
-  return { statusCode: 200 };
-};
+    let scheduledChunks = 0;
+    for (const ch of chunks) {
+      if (Date.now() >= deadline) {
+        log('warn', 'budget.exhausted', {
+          scheduledChunks,
+          remainingMs: context.getRemainingTimeInMillis?.(),
+        });
+        break;
+      }
+      scheduledChunks++;
+      void chunksQueue.add(() => processChunk(pool!, ch));
+    }
+
+    const msLeft = Math.max(0, deadline - Date.now());
+    try {
+      await Promise.race([
+        chunksQueue.onIdle(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('TIME_BUDGET_EARLY_EXIT')), msLeft),
+        ),
+      ]);
+      log('info', 'chunks.processed', { scheduledChunks });
+    } catch (err) {
+      const e = err as { message?: string } | undefined;
+      log('warn', 'early.exit.failfast', {
+        scheduledChunks,
+        err: e?.message ?? 'unknown',
+      });
+      throw err;
+    }
+
+    log('info', 'invoke.done', {
+      scheduledChunks,
+      tookMs: remainingTime - (context.getRemainingTimeInMillis?.() ?? 0),
+    });
+
+    await flushPending(CONNECTIONS_TABLE, WS_ENDPOINT);
+    return { statusCode: 200 };
+  },
+);

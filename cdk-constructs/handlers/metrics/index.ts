@@ -32,39 +32,16 @@ function pickStageDefaults(qs: Record<string, string | undefined>) {
   const isTransform = stage === 'transform' || stage === 'xform';
 
   const fn =
-    qs.function ??
-    (isTransform ? process.env.TRANSFORM_FN : process.env.CONSUMER_FN) ??
-    '';
+    qs.function ?? (isTransform ? process.env.TRANSFORM_FN : process.env.CONSUMER_FN) ?? '';
 
   const consumerGroup =
     qs.consumerGroup ??
     (isTransform ? process.env.TRANSFORM_CONSUMER_GROUP : process.env.CONSUMER_GROUP) ??
     '';
 
-  const topic =
-    qs.topic ??
-    (isTransform ? process.env.RAW_TOPIC : process.env.BUFFER_TOPIC) ??
-    '';
+  const topic = qs.topic ?? (isTransform ? process.env.RAW_TOPIC : process.env.BUFFER_TOPIC) ?? '';
 
   return { stage, isTransform, fn, consumerGroup, topic };
-}
-
-function kafkaSearchExpr(opts: { cluster: string; topic?: string; period?: number }) {
-  const { cluster, topic, period = 60 } = opts;
-
-  const dims = topic
-    ? '{AWS/Kafka,Cluster Name,Broker ID,Topic}'
-    : '{AWS/Kafka,Cluster Name,Broker ID}';
-
-  const filters = ['MetricName="MessagesInPerSec"', `Cluster\\ Name="${cluster}"`];
-  if (topic) {
-    filters.push(`Topic="${topic}"`);
-  }
-
-  return {
-    searchId: topic ? 'mtopic' : 'mbroker',
-    expr: `SEARCH('${dims} ${filters.join(' AND ')}', 'Sum', ${period})`,
-  };
 }
 
 function parseRange(s = '15m') {
@@ -107,57 +84,6 @@ export async function getMetricData(
   return map;
 }
 
-async function throughput(qs: Record<string, string | undefined>) {
-  const cluster = qs.cluster ?? process.env.CLUSTER!;
-  const rawTopic = qs.rawTopic ?? process.env.RAW_TOPIC!;
-  const bufferTopic = qs.bufferTopic ?? process.env.BUFFER_TOPIC!;
-  const { start, end } = parseRange(qs.range);
-
-  const qRawTopic = kafkaSearchExpr({ cluster, topic: rawTopic });
-  const qBufTopic = kafkaSearchExpr({ cluster, topic: bufferTopic });
-
-  let queries: MetricDataQuery[] = [
-    { Id: qRawTopic.searchId, Expression: qRawTopic.expr },
-    { Id: 'raw', Expression: 'SUM(METRICS())' },
-    { Id: qBufTopic.searchId, Expression: qBufTopic.expr },
-    { Id: 'buffer', Expression: 'SUM(METRICS())' },
-  ];
-
-  try {
-    const map = await getMetricData(queries, start, end);
-    return {
-      statusCode: 200,
-      headers: CORS,
-      body: JSON.stringify({
-        raw: toSeries(map.get('raw')),
-        buffer: toSeries(map.get('buffer')),
-      }),
-    };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    const isInvalidSearch = msg.includes('Invalid SEARCH parameter');
-    if (!isInvalidSearch) {
-      return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: msg }) };
-    }
-
-    const qRaw = kafkaSearchExpr({ cluster });
-    queries = [
-      { Id: qRaw.searchId, Expression: qRaw.expr },
-
-      { Id: 'all', Expression: 'SUM(METRICS())' },
-    ];
-    const map = await getMetricData(queries, start, end);
-    return {
-      statusCode: 200,
-      headers: CORS,
-      body: JSON.stringify({
-        raw: toSeries(map.get('all')),
-        buffer: toSeries(map.get('all')),
-        note: 'Per-topic metrics not enabled; showing cluster-wide MessagesInPerSec.',
-      }),
-    };
-  }
-}
 
 async function lag(qs: Record<string, string | undefined>) {
   const cluster = qs.cluster ?? process.env.CLUSTER!;
@@ -172,9 +98,9 @@ async function lag(qs: Record<string, string | undefined>) {
           Namespace: 'AWS/Kafka',
           MetricName: 'SumOffsetLag',
           Dimensions: [
-            { Name: 'Cluster Name',   Value: cluster },
+            { Name: 'Cluster Name', Value: cluster },
             { Name: 'Consumer Group', Value: consumerGroup },
-            { Name: 'Topic',          Value: topic },
+            { Name: 'Topic', Value: topic },
           ],
         },
         Period: 60,
@@ -206,7 +132,7 @@ async function lag(qs: Record<string, string | undefined>) {
             Namespace: 'AWS/Kafka',
             MetricName: 'SumOffsetLag',
             Dimensions: [
-              { Name: 'Cluster Name',   Value: cluster },
+              { Name: 'Cluster Name', Value: cluster },
               { Name: 'Consumer Group', Value: consumerGroup },
               // Topic omitted
             ],
@@ -230,7 +156,6 @@ async function lag(qs: Record<string, string | undefined>) {
     }),
   };
 }
-
 
 async function lambdaQuality(qs: Record<string, string | undefined>) {
   const { fn } = pickStageDefaults(qs);
@@ -288,14 +213,10 @@ async function lambdaQuality(qs: Record<string, string | undefined>) {
   };
 }
 
-
 export async function handler(event: APIGEvent): Promise<APIGResp> {
   try {
     const path = event.rawPath || '';
     const qs = event.queryStringParameters ?? {};
-    if (path.endsWith('/throughput')) {
-      return throughput(qs);
-    }
     if (path.endsWith('/lag')) {
       return lag(qs);
     }

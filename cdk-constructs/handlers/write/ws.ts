@@ -86,7 +86,6 @@ const WS_MAX_RETRY = Number(process.env.WS_MAX_RETRY ?? 3);
 const WS_COALESCE_MIN_MS = Number(process.env.WS_COALESCE_MIN_MS ?? 2000);
 const WS_COALESCE_MAX_MS = Number(process.env.WS_COALESCE_MAX_MS ?? 3000);
 
-
 let apigw: ApiGatewayManagementApi | null = null;
 function getApi(endpoint: string) {
   apigw = apigw ?? new ApiGatewayManagementApi({ endpoint });

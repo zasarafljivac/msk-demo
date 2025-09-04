@@ -1,0 +1,8 @@
+[
+  {
+    "Source": "burst.scheduler",
+    "DetailType": "hourly-burst",
+    "EventBusName": "MskDemoComputeLambdaSetLoadGenBurstScheduleLoadGenBurstBus54A541A7",
+    "Detail": "{\"second\": 0, \"rate\": 400, \"seconds\": 60}"
+  }
+]

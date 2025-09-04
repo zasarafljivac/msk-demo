@@ -1,3 +1,4 @@
+import { metricScope, Unit } from 'aws-embedded-metrics';
 import { generateAuthToken } from 'aws-msk-iam-sasl-signer-js';
 import type { Producer } from 'kafkajs';
 import { Kafka, logLevel, Partitioners } from 'kafkajs';
@@ -215,9 +216,17 @@ function toKey(input?: unknown): Buffer | undefined {
   return undefined;
 }
 
-export const handler = async (event: KafkaEventMin) => {
+export const handler = metricScope((metrics) => async (event: KafkaEventMin) => {
   const producer = await getProducer();
   const msgs: { key: Buffer; value: Buffer }[] = [];
+
+  metrics.setNamespace('MSKDemo');
+  metrics.setDimensions({
+    Stage: 'source',
+    Topic: process.env.SOURCE_TOPIC ?? 'msk-demo-source',
+  });
+  const count = Object.values(event.records ?? {}).reduce((n, arr) => n + (arr?.length ?? 0), 0);
+  metrics.putMetric('TPS', count, Unit.Count);
 
   const batches = Object.values(event.records ?? {});
   for (const arr of batches) {
@@ -250,4 +259,4 @@ export const handler = async (event: KafkaEventMin) => {
     await producer.send({ topic: bufferTopic, messages: msgs });
   }
   return { statusCode: 200, batchItemFailures: [] as { itemIdentifier: string }[] };
-};
+});
