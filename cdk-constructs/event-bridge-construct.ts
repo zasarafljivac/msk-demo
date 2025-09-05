@@ -15,10 +15,12 @@ export class EventBridgeConstruct extends Construct {
     super(scope, id);
 
     const bus = new events.EventBus(this, 'LoadGenBurstBus');
+
     const rule = new events.Rule(this, 'LoadGenBurstRule', {
       eventBus: bus,
       eventPattern: { source: ['burst.scheduler'] },
     });
+
     rule.addTarget(
       new targets.LambdaFunction(props.loadGenFn, {
         retryAttempts: 0,
@@ -35,25 +37,37 @@ export class EventBridgeConstruct extends Construct {
         resources: [bus.eventBusArn],
       }),
     );
-    return new scheduler.CfnSchedule(this, `LoadGenBurst`, {
-      flexibleTimeWindow: { mode: 'OFF' },
-      scheduleExpressionTimezone: 'UTC',
-      scheduleExpression: `cron( 30 * * * ? *)`,
-      target: {
-        arn: 'arn:aws:scheduler:::aws-sdk:eventbridge:putEvents',
-        roleArn: schedulerRole.roleArn,
-        input: JSON.stringify({
-          Entries: [
-            {
-              Source: 'burst.scheduler',
-              DetailType: '30-minute-burst',
-              EventBusName: bus.eventBusName,
-              Detail: JSON.stringify({ rate: 400, seconds: 60 }),
-            },
-          ],
-        }),
-      },
-      description: `Emit burst event to generate load.`,
-    });
+
+    const makeBurstSchedule = (
+      idSuffix: string,
+      detailType: string,
+      rate: number,
+      seconds: number,
+      state: 'ENABLED' | 'DISABLED',
+    ) =>
+      new scheduler.CfnSchedule(this, `LoadGenBurst-${idSuffix}`, {
+        flexibleTimeWindow: { mode: 'OFF' },
+        scheduleExpressionTimezone: 'UTC',
+        scheduleExpression: 'cron(30 * * * ? *)',
+        state, // ENABLED or DISABLED
+        target: {
+          arn: 'arn:aws:scheduler:::aws-sdk:eventbridge:putEvents',
+          roleArn: schedulerRole.roleArn,
+          input: JSON.stringify({
+            Entries: [
+              {
+                Source: 'burst.scheduler',
+                DetailType: detailType,
+                EventBusName: bus.eventBusName,
+                Detail: JSON.stringify({ rate, seconds }),
+              },
+            ],
+          }),
+        },
+        description: `Emit burst event (${rate}/s for ${seconds}s) at :30 every hour`,
+      });
+
+    makeBurstSchedule('100rps', 'hourly-burst-100', 100, 60, 'DISABLED');
+    makeBurstSchedule('400rps', 'hourly-burst-400', 400, 60, 'ENABLED');
   }
 }

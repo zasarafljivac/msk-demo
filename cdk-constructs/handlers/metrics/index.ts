@@ -84,7 +84,6 @@ export async function getMetricData(
   return map;
 }
 
-
 async function lag(qs: Record<string, string | undefined>) {
   const cluster = qs.cluster ?? process.env.CLUSTER!;
   const { fn, consumerGroup, topic } = pickStageDefaults(qs);
